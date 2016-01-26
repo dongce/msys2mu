@@ -22,6 +22,8 @@
 #include "config.h"
 #endif /*HAVE_CONFIG_H*/
 
+#include <glib.h>
+#include <glib/gstdio.h>
 #include <cstdio>
 #include <xapian.h>
 #include <cstring>
@@ -74,7 +76,7 @@ xapian_get_metadata (const gchar *xpath, const gchar *key)
 	g_return_val_if_fail (xpath, NULL);
 	g_return_val_if_fail (key, NULL);
 
-	if (access(xpath, F_OK) != 0) {
+	if (g_access(xpath, F_OK) != 0) {
 		g_warning ("cannot access %s: %s", xpath, strerror(errno));
 		return NULL;
 	}

@@ -57,12 +57,11 @@ append_sexp_attr (GString *gstr, const char* elm, const char *str)
 	if (!str || strlen(str) == 0)
 		return; /* empty: don't include */
 
-
 	utf8 = mu_str_utf8ify (str);
 
-	for (cur = utf8; *cur; ++cur)
-		if (iscntrl(*cur))
-			*cur = ' ';
+//deprecated//    for (cur = utf8; *cur; ++cur)
+//deprecated//    	if (iscntrl(*cur))
+//deprecated//    		*cur = ' ';
 
 	esc = mu_str_escape_c_literal (utf8, TRUE);
 	g_free (utf8);

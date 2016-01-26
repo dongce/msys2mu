@@ -132,24 +132,24 @@ get_gpg_crypto_context (MuMsgOptions opts, GError **err)
 	char			*gpg;
 
 	cctx  = NULL;
-	if (!(gpg   = get_gpg (err)))
-		return NULL;
+//notuse//if (!(gpg   = get_gpg (err)))
+//notuse//	return NULL;
+//notuse//
+//notuse//cctx = g_mime_gpg_context_new (
+//notuse//	(GMimePasswordRequestFunc)password_requester, gpg);
+//notuse//g_free (gpg);
 
-	cctx = g_mime_gpg_context_new (
-		(GMimePasswordRequestFunc)password_requester, gpg);
-	g_free (gpg);
-
-	if (!cctx) {
-		mu_util_g_set_error (err, MU_ERROR,
-				     "failed to get GPG crypto context");
-		return NULL;
-	}
-
-	/* always try to use the agent */
-	g_mime_gpg_context_set_use_agent (GMIME_GPG_CONTEXT(cctx), TRUE);
- 	g_mime_gpg_context_set_auto_key_retrieve
-		(GMIME_GPG_CONTEXT(cctx),
-		 opts & MU_MSG_OPTION_AUTO_RETRIEVE ? TRUE:FALSE);
+//donotuse//if (!cctx) {
+//donotuse//	mu_util_g_set_error (err, MU_ERROR,
+//donotuse//			     "failed to get GPG crypto context");
+//donotuse//	return NULL;
+//donotuse//}
+//donotuse//
+//donotuse///* always try to use the agent */
+//donotuse//g_mime_gpg_context_set_use_agent (GMIME_GPG_CONTEXT(cctx), TRUE);
+//donotuse//g_mime_gpg_context_set_auto_key_retrieve
+//donotuse//	(GMIME_GPG_CONTEXT(cctx),
+//donotuse//	 opts & MU_MSG_OPTION_AUTO_RETRIEVE ? TRUE:FALSE);
 
 	return cctx;
 }

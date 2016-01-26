@@ -53,6 +53,48 @@
 #include "mu-msg-part.h"
 #include "mu-contacts.h"
 
+/* POSIX emulation layer for Windows.
+*
+* Copyright (C) 2008-2012 Anope Team <team@anope.org>
+*
+* Please read COPYING and README for further details.
+*
+* Based on the original code of Epona by Lara.
+* Based on the original code of Services by Andy Church.
+*/
+
+#include <windows.h>
+#include <signal.h>
+//#include "sigaction.h"
+
+/* POSIX emulation layer for Windows.
+*
+* Copyright (C) 2008-2012 Anope Team <team@anope.org>
+*
+* Please read COPYING and README for further details.
+*
+* Based on the original code of Epona by Lara.
+* Based on the original code of Services by Andy Church.
+*/
+
+#define sigemptyset(x) memset((x), 0, sizeof(*(x)))
+
+#ifndef SIGHUP
+# define SIGHUP -1
+#endif
+#ifndef SIGPIPE
+# define SIGPIPE -1
+#endif
+
+struct sigaction
+{
+       void (*sa_handler)(int);
+       int sa_flags;
+       int sa_mask;
+};
+
+
+
 /* signal handling *****************************************************/
 /*
  * when we receive SIGINT, SIGHUP, SIGTERM, set MU_CAUGHT_SIGNAL to
@@ -76,7 +118,7 @@ install_sig_handler (void)
 
         action.sa_handler = sig_handler;
         sigemptyset(&action.sa_mask);
-        action.sa_flags = SA_RESETHAND;
+        //action.sa_flags = SA_RESETHAND;
 
         for (i = 0; i != G_N_ELEMENTS(sigs); ++i)
                 if (sigaction (sigs[i], &action, NULL) != 0)

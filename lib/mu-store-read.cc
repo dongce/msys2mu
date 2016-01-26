@@ -44,6 +44,34 @@
 
 
 // note: not re-entrant
+// const char*
+// _MuStore::get_uid_term (const char* path) const
+// {
+// 	char real_path[PATH_MAX + 1];
+// 	static char uid_term[64] = { '\0' };
+// 	if (G_UNLIKELY(uid_term[0] == '\0'))
+// 		uid_term[0] = mu_msg_field_xapian_prefix(MU_MSG_FIELD_ID_UID);
+
+// 	// note: realpath fails when there's no file at path
+
+// 	// char real_path[PATH_MAX + 1];
+
+// 	gchar* cp949 = g_convert_with_fallback ( path, -1, "CP949",
+// 					"UTF-8", NULL,
+// 					NULL, NULL, NULL);
+	
+// 	// if (!_fullpath( real_path, path, PATH_MAX))
+// 	// 	strcpy (real_path, path);
+
+
+// 	strncpy (uid_term + 1, mu_util_get_hash (cp949), sizeof(uid_term) - 1);
+// 	// g_free(cp949) ; 
+// 	return uid_term;
+// }
+
+
+
+
 const char*
 _MuStore::get_uid_term (const char* path) const
 {
@@ -52,7 +80,8 @@ _MuStore::get_uid_term (const char* path) const
 		uid_term[0] = mu_msg_field_xapian_prefix(MU_MSG_FIELD_ID_UID);
 
 	strncpy (uid_term + 1, mu_util_get_hash (path), sizeof(uid_term) - 1);
-
+	// printf("%s\n" , uid_term) ; 
+	      
 	return uid_term;
 }
 

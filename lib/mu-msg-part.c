@@ -684,7 +684,7 @@ save_object (GMimeObject *obj, MuMsgOptions opts, const char *fullpath,
 
 	/* don't try to overwrite when we already have it; useful when
 	 * you're sure it's not a different file with the same name */
-	if (use_existing && access (fullpath, F_OK) == 0)
+	if (use_existing && g_access (fullpath, F_OK) == 0)
 		return TRUE;
 
 	/* ok, try to create the file */

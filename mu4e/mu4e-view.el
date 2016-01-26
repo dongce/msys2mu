@@ -289,21 +289,20 @@ marking if it still had that."
     (with-current-buffer buf
       (switch-to-buffer buf)
       (setq mu4e~view-msg msg)
-      (when (or embedded (not (mu4e~view-mark-as-read-maybe msg)))
-	(let ((inhibit-read-only t))
-	  (erase-buffer)
-	  (mu4e~delete-all-overlays)
-	  (insert (mu4e-view-message-text msg))
-	  (goto-char (point-min))
-	  (mu4e~fontify-cited)
-	  (mu4e~fontify-signature)
-	  (mu4e~view-make-urls-clickable)
-	  (mu4e~view-show-images-maybe msg)
-	  (setq
-	    mu4e~view-buffer buf
-	    mu4e~view-headers-buffer headersbuf)
-	  (when embedded (local-set-key "q" 'kill-buffer-and-window))
-	  (mu4e-view-mode))))))
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (mu4e~delete-all-overlays)
+        (insert (mu4e-view-message-text msg))
+        (goto-char (point-min))
+        (mu4e~fontify-cited)
+        (mu4e~fontify-signature)
+        (mu4e~view-make-urls-clickable)
+        (mu4e~view-show-images-maybe msg)
+        (setq
+         mu4e~view-buffer buf
+         mu4e~view-headers-buffer headersbuf)
+        (when embedded (local-set-key "q" 'kill-buffer-and-window))
+        (mu4e-view-mode)))))
 
 (defun mu4e~view-get-property-from-event (prop)
   "Get the property PROP at point, or the location of the mouse.
@@ -765,16 +764,18 @@ FUNC should be a function taking two arguments:
 If the message is not New/Unread, do nothing. Evaluates to t if it
 triggers any changes, nil otherwise. If this function does any
 changes, it triggers a refresh."
-  (when (and mu4e-view-auto-mark-as-read msg)
-    (let ((flags (mu4e-message-field msg :flags))
-	   (msgid (mu4e-message-field msg :message-id))
-	   (docid (mu4e-message-field msg :docid)))
-      ;; attached (embedded) messages don't have docids; leave them alone if it is a new message
-      (when (and docid (or (member 'unread flags) (member 'new flags)))
-	;; mark /all/ messages with this message-id as read, so all copies of
-	;; this message will be marked as read.
-	(mu4e~proc-move msgid nil "+S-u-N")
-	t))))
+  ;; (when (and mu4e-view-auto-mark-as-read msg)
+  ;;   (let ((flags (mu4e-message-field msg :flags))
+	;;    (msgid (mu4e-message-field msg :message-id))
+	;;    (docid (mu4e-message-field msg :docid)))
+  ;;     ;; attached (embedded) messages don't have docids; leave them alone if it is a new message
+  ;;     (when (and docid (or (member 'unread flags) (member 'new flags)))
+	;; ;; mark /all/ messages with this message-id as read, so all copies of
+	;; ;; this message will be marked as read.
+	;; (mu4e~proc-move msgid nil "+S-u-N")
+	;; t)))
+  t
+  )
 
 (defun mu4e~view-browse-url-func (url)
   "Return a function that executes `browse-url' with URL.

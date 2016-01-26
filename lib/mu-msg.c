@@ -342,7 +342,7 @@ mu_msg_get_timestamp (MuMsg *self)
 		return self->_file->_timestamp;
 
 	path = mu_msg_get_path (self);
-	if (!path || stat (path, &statbuf) < 0)
+	if (!path || g_stat (path, &statbuf) < 0)
 		return 0;
 
 	return statbuf.st_mtime;
@@ -798,7 +798,7 @@ mu_msg_is_readable (MuMsg *self)
 {
 	g_return_val_if_fail (self, FALSE);
 
-	return access (mu_msg_get_path (self), R_OK) == 0 ? TRUE : FALSE;
+	return g_access (mu_msg_get_path (self), R_OK) == 0 ? TRUE : FALSE;
 }
 
 

@@ -85,12 +85,18 @@ handle_error (MuConfig *conf, MuError merr, GError **err)
 }
 
 
+#include <fcntl.h>
+
 int
 main (int argc, char *argv[])
 {
 	GError *err;
 	MuError rv;
 	MuConfig *conf;
+
+       // _setmode(_fileno(stdin), _O_BINARY); 
+       _setmode(_fileno(stdout), _O_BINARY); 
+       _setmode(_fileno(stderr), _O_BINARY); 
 
 	setlocale (LC_ALL, "");
 

@@ -25,6 +25,46 @@
 #include "mu-date.h"
 #include "mu-str.h"
 
+void
+setenv(char *var, char *val, int overwrite)
+{
+	char *str=g_strdup_printf("%s=%s",var,val);
+	//if (overwrite || ! getenv(var) )
+	putenv(str);
+	g_free(str);
+}
+
+int unsetenv(const char *name)
+{
+  size_t len;
+  char **ep;
+
+  if (name == NULL || *name == '\0' || strchr (name, '=') != NULL)
+    {
+      return -1;
+    }
+
+  len = strlen (name);
+
+  ep = _environ;
+  while (*ep != NULL)
+    if (!strncmp (*ep, name, len) && (*ep)[len] == '=')
+      {
+    /* Found it.  Remove this pointer by moving later ones back.  */
+    char **dp = ep;
+
+    do
+      dp[0] = dp[1];
+    while (*dp++);
+    /* Continue the loop in case NAME appears again.  */
+      }
+    else
+      ++ep;
+
+  return 0;
+}
+
+
 const char*
 mu_date_str_s (const char* frm, time_t t)
 {
@@ -225,6 +265,36 @@ mu_date_interpret (const char *datespec, gboolean is_begin)
 	s = mu_date_interpret (datespec, is_begin);
 	return s ? g_strdup(s) : NULL;
 }
+
+
+#include <config.h>
+// #include "timegm.h"
+
+#ifndef HAVE_TIMEGM
+
+#include <stdlib.h> // For setenv() or putenv()
+#include <time.h>
+
+
+time_t
+timegm(struct tm *tm)
+{
+    static int set_tz = 0;
+    if (!set_tz) {
+#ifdef HAVE__PUTENV_S
+	_putenv_s("TZ", "");
+#elif defined HAVE_SETENV
+	setenv("TZ", "", 1);
+#else
+	putenv(("TZ="));
+#endif
+	tzset();
+	set_tz = 1;
+    }
+    return mktime(tm);
+}
+
+#endif
 
 
 time_t

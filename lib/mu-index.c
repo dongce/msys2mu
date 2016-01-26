@@ -190,11 +190,11 @@ on_run_maildir_msg (const char *fullpath, const char *mdir,
 	gboolean updated;
 
 	/* protect against too big messages */
-	if (G_UNLIKELY(statbuf->st_size > data->_max_filesize)) {
-		g_warning ("ignoring because bigger than %u bytes: %s",
-			   data->_max_filesize, fullpath);
-		return MU_OK; /* not an error */
-	}
+	// if (G_UNLIKELY(statbuf->st_size > data->_max_filesize)) {
+	// 	g_warning ("ignoring because bigger than %u bytes: %s",
+	// 		   data->_max_filesize, fullpath);
+	// 	return MU_OK; /* not an error */
+	// }
 
 	result = run_msg_callback_maybe (data);
 	if (result != MU_OK)
@@ -263,7 +263,7 @@ check_path (const char *path)
 		return FALSE;
 	}
 
-	if (access (path, R_OK) != 0) {
+	if (g_access (path, R_OK) != 0) {
 		g_warning ("%s: cannot open '%s': %s",
 			   __func__, path, strerror (errno));
 		return FALSE;
@@ -414,7 +414,7 @@ typedef struct _CleanupData CleanupData;
 static MuError
 foreach_doc_cb (const char* path, CleanupData *cudata)
 {
-	if (access (path, R_OK) != 0) {
+	if (g_access (path, R_OK) != 0) {
 		if (errno != EACCES)
 			g_debug ("cannot access %s: %s", path, strerror(errno));
 		if (!mu_store_remove_path (cudata->_store, path))

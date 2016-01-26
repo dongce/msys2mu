@@ -1047,31 +1047,31 @@ errexit:
 char *
 mu_str_remove_ctrl_in_place (char *str)
 {
-	char *cur;
-
-	g_return_val_if_fail (str, NULL);
-
-	for (cur = str; *cur; ++cur) {
-
-		GString *gstr;
-
-		if (!iscntrl(*cur))
-			continue;
-
-		if (isspace(*cur)) {
-			/* squash special white space into a simple space */
-			*cur = ' ';
-		} else {
-			/* remove other control characters */
-			gstr = g_string_sized_new (strlen (str));
-			for (cur = str; *cur; ++cur)
-				if (!iscntrl (*cur))
-					g_string_append_c (gstr, *cur);
-			memcpy (str, gstr->str, gstr->len); /* fits */
-			g_string_free (gstr, TRUE);
-			break;
-		}
-	}
+//deprecated//    char *cur;
+//deprecated//    
+//deprecated//    g_return_val_if_fail (str, NULL);
+//deprecated//    
+//deprecated//    for (cur = str; *cur; ++cur) {
+//deprecated//    
+//deprecated//    	GString *gstr;
+//deprecated//    
+//deprecated//    	if (!iscntrl(*cur))
+//deprecated//    		continue;
+//deprecated//    
+//deprecated//    	if (isspace(*cur)) {
+//deprecated//    		/* squash special white space into a simple space */
+//deprecated//    		*cur = ' ';
+//deprecated//    	} else {
+//deprecated//    		/* remove other control characters */
+//deprecated//    		gstr = g_string_sized_new (strlen (str));
+//deprecated//    		for (cur = str; *cur; ++cur)
+//deprecated//    			if (!iscntrl (*cur))
+//deprecated//    				g_string_append_c (gstr, *cur);
+//deprecated//    		memcpy (str, gstr->str, gstr->len); /* fits */
+//deprecated//    		g_string_free (gstr, TRUE);
+//deprecated//    		break;
+//deprecated//    	}
+//deprecated//    }
 
 	return str;
 }

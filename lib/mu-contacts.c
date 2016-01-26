@@ -67,7 +67,7 @@ load_key_file (const char *path)
 	/* of course this is racy, but it's only for giving more
 	 * meaningful errors to users */
 	file_exists = TRUE;
-	if (access(path, F_OK) != 0) {
+	if (g_access(path, F_OK) != 0) {
 		if (errno != ENOENT) {
 			g_warning ("cannot open %s: %s", path, strerror(errno));
 			return NULL;

@@ -78,14 +78,14 @@ init_file_metadata (MuMsgFile *self, const char* path, const gchar* mdir,
 {
 	struct stat statbuf;
 
-	if (access (path, R_OK) != 0) {
+	if (g_access (path, R_OK) != 0) {
 		mu_util_g_set_error (err, MU_ERROR_FILE,
 				     "cannot read file %s: %s",
 				     path, strerror(errno));
 		return FALSE;
 	}
 
-	if (stat (path, &statbuf) < 0) {
+	if (g_stat (path, &statbuf) < 0) {
 		mu_util_g_set_error (err, MU_ERROR_FILE,
 				     "cannot stat %s: %s",
 				     path, strerror(errno));
@@ -102,12 +102,13 @@ init_file_metadata (MuMsgFile *self, const char* path, const gchar* mdir,
 	self->_size	 = (size_t)statbuf.st_size;
 
 	/* remove double slashes, relative paths etc. from path & mdir */
-	if (!realpath (path, self->_path)) {
-		mu_util_g_set_error (err, MU_ERROR_FILE,
-				     "could not get realpath for %s: %s",
-				     path, strerror(errno));
-		return FALSE;
-	}
+//deprecated//if (!_fullpath (self->_path, path, PATH_MAX)) {
+//deprecated//	mu_util_g_set_error (err, MU_ERROR_FILE,
+//deprecated//			     "could not get realpath for %s: %s",
+//deprecated//			     path, strerror(errno));
+//deprecated//	return FALSE;
+//deprecated//}
+	g_strlcpy( self->_path , path , PATH_MAX) ; 
 
 	strncpy (self->_maildir, mdir ? mdir : "", PATH_MAX);
 	return TRUE;
@@ -121,7 +122,14 @@ get_mime_stream (MuMsgFile *self, const char *path, GError **err)
 	FILE *file;
 	GMimeStream *stream;
 
-	file = fopen (path, "r");
+
+	// file = g_fopen(path, "rb") ; //segment fault
+	gchar* cp949 = g_convert_with_fallback ( path, -1, "CP949",
+					"UTF-8", NULL,
+					NULL, NULL, NULL);
+	
+	file = fopen(cp949, "rb"); //g_fopen 은 정상 동작하지 아니한다. 
+	g_free(cp949) ; 
 	if (!file) {
 		g_set_error (err, MU_ERROR_DOMAIN, MU_ERROR_FILE,
 			     "cannot open %s: %s",

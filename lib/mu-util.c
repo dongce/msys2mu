@@ -28,7 +28,29 @@
 
 #ifdef HAVE_WORDEXP_H
 #include <wordexp.h> /* for shell-style globbing */
+#else
+#define  _WIN32
+
+void* xrealloc(void* ptr, size_t size) 
+{
+  ptr = realloc(ptr, size);
+  if ( !ptr ) {
+    exit(-1);
+  }
+  return ptr;
+}
+
+#include "glob.c"
+#include "wordexp.c"
+#include "strbuf.c"
+
+
+//wordexp
+
+
 #endif /*HAVE_WORDEXP_H*/
+
+
 
 #include <stdlib.h>
 
@@ -44,7 +66,7 @@
 #include <glib/gstdio.h>
 #include <errno.h>
 
-#include <langinfo.h>
+// #include <langinfo.h>
 
 
 static char*
@@ -105,8 +127,9 @@ mu_util_dir_expand (const char *path)
 	if (access (dir, F_OK) != 0)
 		return dir;
 
+
 	/* now resolve any symlinks, .. etc. */
-	if (realpath (dir, resolved) == NULL) {
+	if (_fullpath( resolved, dir, PATH_MAX) == NULL) {
 		/* g_debug ("%s: could not get realpath for '%s': %s", */
 		/* 	 __func__, dir, strerror(errno)); */
 		g_free (dir);
@@ -122,13 +145,13 @@ char*
 mu_util_create_tmpdir (void)
 {
 	gchar *dirname;
-
+	srand(time(NULL)) ; 
         dirname =  g_strdup_printf ("%s%cmu-%d%c%x",
 				    g_get_tmp_dir(),
 				    G_DIR_SEPARATOR,
-				    getuid(),
+				    500,
 				    G_DIR_SEPARATOR,
-				    (int)random()*getpid()*(int)time(NULL));
+				    (int)rand()*500*(int)time(NULL));
 
 	if (!mu_util_create_dir_maybe (dirname, 0700, FALSE)) {
 		g_free (dirname);
@@ -159,7 +182,7 @@ mu_util_cache_dir (void)
 
 	snprintf (cachedir, sizeof(cachedir), "%s%cmu-%u",
 		  g_get_tmp_dir(), G_DIR_SEPARATOR,
-		  getuid());
+		  500);
 
 	return cachedir;
 }
@@ -176,12 +199,12 @@ mu_util_check_dir (const gchar* path, gboolean readable, gboolean writeable)
 
 	mode = F_OK | (readable ? R_OK : 0) | (writeable ? W_OK : 0);
 
-	if (access (path, mode) != 0) {
+	if (g_access (path, mode) != 0) {
 		/* g_debug ("Cannot access %s: %s", path, strerror (errno)); */
 		return FALSE;
 	}
 
-	if (stat (path, &statbuf) != 0) {
+	if (g_stat(path, &statbuf) != 0) {
 		/* g_debug ("Cannot stat %s: %s", path, strerror (errno)); */
 		return FALSE;
 	}
@@ -296,10 +319,11 @@ mu_util_create_writeable_fd (const char* path, mode_t mode,
 	errno = 0; /* clear! */
 	g_return_val_if_fail (path, -1);
 
+	
 	if (overwrite)
-		return open (path, O_WRONLY|O_CREAT|O_TRUNC, mode);
+		return g_open (path, O_WRONLY|O_CREAT|O_TRUNC, mode);
 	else
-		return open (path, O_WRONLY|O_CREAT|O_EXCL, mode);
+		return g_open (path, O_WRONLY|O_CREAT|O_EXCL, mode);
 }
 
 
@@ -362,18 +386,19 @@ mu_util_play (const char *path, gboolean allow_local, gboolean allow_remote,
 	const char *prog;
 
 	g_return_val_if_fail (path, FALSE);
-	g_return_val_if_fail (mu_util_is_local_file (path) || allow_remote,
-			      FALSE);
-	g_return_val_if_fail (!mu_util_is_local_file (path) || allow_local,
-			      FALSE);
+	// g_return_val_if_fail (mu_util_is_local_file (path) || allow_remote,
+	// 		      FALSE);
+	// g_return_val_if_fail (!mu_util_is_local_file (path) || allow_local,
+	// 		      FALSE);
 
 	prog = g_getenv ("MU_PLAY_PROGRAM");
 	if (!prog) {
-#ifdef __APPLE__
-		prog = "open";
-#else
-		prog = "xdg-open";
-#endif /*!__APPLE__*/
+// #ifdef __APPLE__
+// 		prog = "open";
+// #else
+// 		prog = "xdg-open";
+// #endif /*!__APPLE__*/
+		prog = "explorer";
 	}
 
 	if (!mu_util_program_in_path (prog)) {
@@ -401,7 +426,7 @@ mu_util_get_dtype_with_lstat (const char *path)
 
 	g_return_val_if_fail (path, DT_UNKNOWN);
 
-	if (lstat (path, &statbuf) != 0) {
+	if (g_stat (path, &statbuf) != 0) {
 		g_warning ("stat failed on %s: %s", path, strerror(errno));
 		return DT_UNKNOWN;
 	}
@@ -411,8 +436,8 @@ mu_util_get_dtype_with_lstat (const char *path)
 		return DT_REG;
 	else if (S_ISDIR (statbuf.st_mode))
 		return DT_DIR;
-	else if (S_ISLNK (statbuf.st_mode))
-		return DT_LNK;
+	//else if (S_ISLNK (statbuf.st_mode))
+	//	return DT_LNK;
 
 	return DT_UNKNOWN;
 }
@@ -537,6 +562,24 @@ mu_util_printerr_encoded (const char *frm, ...)
 
 	return rv;
 }
+
+
+
+char *getpass(const char *prompt)
+{
+	struct strbuf buf = STRBUF_INIT;
+
+	fputs(prompt, stderr);
+	for (;;) {
+		char c = _getch();
+		if (c == '\r' || c == '\n')
+			break;
+		strbuf_addch(&buf, c);
+	}
+	fputs("\n", stderr);
+	return strbuf_detach(&buf, NULL);
+}
+
 
 
 char*

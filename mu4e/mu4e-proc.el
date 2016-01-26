@@ -78,7 +78,9 @@ Start the process if needed."
     (unless mu4e~proc-process
       (mu4e-error "Failed to start the mu4e backend"))
     (set-process-query-on-exit-flag mu4e~proc-process nil)
-    (set-process-coding-system mu4e~proc-process 'binary 'utf-8-unix)
+    (set-process-coding-system mu4e~proc-process 'binary 'utf-8)
+    ;; (set-process-coding-system mu4e~proc-process 'utf-8-dos 'utf-8-dos)
+    ;; (set-process-coding-system mu4e~proc-process 'cp949 'cp949)
     (set-process-filter mu4e~proc-process 'mu4e~proc-filter)
     (set-process-sentinel mu4e~proc-process 'mu4e~proc-sentinel)))
 
@@ -193,6 +195,7 @@ The server output is as follows:
   `mu4e-compose-func'."
   (mu4e-log 'misc "* Received %d byte(s)" (length str))
   (setq mu4e~proc-buf (concat mu4e~proc-buf str)) ;; update our buffer
+  (mu4e-log 'misc "%s" mu4e~proc-buf)
   (let ((sexp (mu4e~proc-eat-sexp-from-buf)))
     (with-local-quit
       (while sexp

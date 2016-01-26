@@ -45,7 +45,7 @@
   :group 'mu4e
   :group 'org)
 
-(defvar org-mu4e-link-query-in-headers-mode nil
+(defvar org-mu4e-link-query-in-headers-mode t
   "If non-nil, `org-store-link' in `mu4e-headers-mode' links to the
 the current query; otherwise, it links to the message at point.")
 
@@ -123,6 +123,7 @@ Example usage:
 (defun org-mu4e-open (path)
   "Open the mu4e message (for paths starting with 'msgid:') or run
 the query (for paths starting with 'query:')."
+  (require 'mu4e)
   (cond
     ((string-match "^msgid:\\(.+\\)" path)
       (mu4e-view-message-with-msgid (match-string 1 path)))
@@ -166,21 +167,44 @@ and images in a multipart/related part."
     (when images "<#/multipart>\n")
     "<#/multipart>\n"))
 
+;; (defun org~mu4e-mime-replace-images (str current-file)
+;;   "Replace images in html files with cid links."
+;;   (let (html-images)
+;;     (cons
+;;      (replace-regexp-in-string ;; replace images in html
+;;       "src=\"\\(file:.+\\)\""
+;;       (lambda (text)
+;;         (format
+;;          "src=\"cid:%s\""
+;;          (let* ((url (and (string-match "src=\"\\([^\"]+\\)\"" text)
+;;                           (match-string 1 text)))
+;;                 ;; (path (expand-file-name url (file-name-directory current-file)))
+;;                 (path (url-filename (url-generic-parse-url url)))
+;;                 (ext (file-name-extension path))
+;;                 (id (replace-regexp-in-string "[\/\\\\]" "_" path)))
+;;            (add-to-list 'html-images
+;;                         (org~mu4e-mime-file
+;; 			  (concat "image/" ext) path id))
+;;            id)))
+;;       str)
+;;      html-images)))
+
+
 (defun org~mu4e-mime-replace-images (str current-file)
   "Replace images in html files with cid links."
   (let (html-images)
     (cons
      (replace-regexp-in-string ;; replace images in html
-      "src=\"\\([^\"]+\\)\""
+      "src=\"file://\\([^\"]+\\)\""
       (lambda (text)
         (format
          "src=\"cid:%s\""
-         (let* ((url (and (string-match "src=\"\\([^\"]+\\)\"" text)
-                          (match-string 1 text)))
-                (path (expand-file-name
-                       url (file-name-directory current-file)))
+         (let* ((url (match-string 1 text))
+                ;; (path (expand-file-name url (file-name-directory current-file)))
+                ;; (path (url-filename (url-generic-parse-url url)))
+                (path (expand-file-name url ))
                 (ext (file-name-extension path))
-                (id (replace-regexp-in-string "[\/\\\\]" "_" path)))
+                (id (replace-regexp-in-string "[:\/\\\\]" "_" path)))
            (add-to-list 'html-images
                         (org~mu4e-mime-file
 			  (concat "image/" ext) path id))
@@ -188,17 +212,59 @@ and images in a multipart/related part."
       str)
      html-images)))
 
+
+;; (defun org~mu4e-mime-convert-to-html ()
+;;   "Convert the current body to html."
+;;   (unless (fboundp 'org-export-string-as)
+;;     (mu4e-error "require function 'org-export-string-as not found."))
+;;   ;; (unless (executable-find "dvipng")
+;;   ;;   (mu4e-error "Required program dvipng not found"))
+;;   (let* ((begin
+;; 	     (save-excursion
+;; 	       (goto-char (point-min))
+;; 	       (search-forward mail-header-separator)))
+;; 	    (end (point-max))
+;; 	    (raw-body (buffer-substring begin end))
+;; 	    (tmp-file (make-temp-name (expand-file-name "mail"
+;; 					temporary-file-directory)))
+;; 	    ;; because we probably don't want to skip part of our mail
+;; 	    (org-export-skip-text-before-1st-heading nil)
+;; 	    ;; because we probably don't want to export a huge style file
+;; 	    (org-export-htmlize-output-type 'inline-css)
+;; 	    ;; makes the replies with ">"s look nicer
+;; 	    (org-export-preserve-breaks t)
+;; 	    ;; dvipng for inline latex because MathJax doesn't work in mail
+;; 	    ;; (org-export-with-LaTeX-fragments 'dvipng)
+;; 	    ;; to hold attachments for inline html images
+;; 	    (html-and-images
+;; 	      (org~mu4e-mime-replace-images
+;;                 (org-export-string-as raw-body 'html )
+;; 		tmp-file))
+;; 	    (html-images (cdr html-and-images))
+;; 	    (html (car html-and-images)))
+;;       (delete-region begin end)
+;;       (save-excursion
+;; 	(goto-char begin)
+;; 	(newline)
+;; 	(insert (org~mu4e-mime-multipart
+;;            raw-body html (mapconcat 'identity html-images "\n"))))))
+
 (defun org~mu4e-mime-convert-to-html ()
   "Convert the current body to html."
   (unless (fboundp 'org-export-string-as)
     (mu4e-error "require function 'org-export-string-as not found."))
-  (unless (executable-find "dvipng")
-    (mu4e-error "Required program dvipng not found"))
-  (let* ((begin
-	     (save-excursion
-	       (goto-char (point-min))
-	       (search-forward mail-header-separator)))
-	    (end (point-max))
+  ;; (unless (executable-find "dvipng")
+  ;;   (mu4e-error "Required program dvipng not found"))
+  (let* ((end
+          (save-excursion
+            (goto-char (point-min))
+            (if (re-search-forward "<#part" nil t)
+                (match-beginning 0 )
+              (point-max))))
+         (begin
+          (save-excursion
+            (goto-char (point-min))
+            (search-forward mail-header-separator)))
 	    (raw-body (buffer-substring begin end))
 	    (tmp-file (make-temp-name (expand-file-name "mail"
 					temporary-file-directory)))
@@ -209,11 +275,11 @@ and images in a multipart/related part."
 	    ;; makes the replies with ">"s look nicer
 	    (org-export-preserve-breaks t)
 	    ;; dvipng for inline latex because MathJax doesn't work in mail
-	    (org-export-with-LaTeX-fragments 'dvipng)
+	    ;; (org-export-with-LaTeX-fragments 'dvipng)
 	    ;; to hold attachments for inline html images
 	    (html-and-images
 	      (org~mu4e-mime-replace-images
-                (org-export-string-as raw-body 'html t)
+                (org-export-string-as raw-body 'html )
 		tmp-file))
 	    (html-images (cdr html-and-images))
 	    (html (car html-and-images)))
@@ -299,18 +365,19 @@ or org-mode (when in the body)."
   "Pseudo-Minor mode for mu4e-compose-mode, to edit the message
 body using org-mode."
   (interactive)
+  ;; (setf  sendmail-coding-system 'base64)
   (unless (member major-mode '(org-mode mu4e-compose-mode))
     (mu4e-error "Need org-mode or mu4e-compose-mode"))
   ;; we can check if we're already in org-mu4e-compose-mode by checking if the
   ;; post-command-hook is set; hackish...but a buffer-local variable does not
   ;; seem to survive buffer switching
   (if (not (member 'org~mu4e-mime-switch-headers-or-body post-command-hook))
-    (progn
-      (org~mu4e-mime-switch-headers-or-body)
-      (mu4e-message
-	(concat
-	  "org-mu4e-compose-org-mode enabled; "
-	  "press M-m before issuing message-mode commands")))
+      (progn
+        (org~mu4e-mime-switch-headers-or-body)
+        (mu4e-message
+         (concat
+          "org-mu4e-compose-org-mode enabled; "
+          "press M-m before issuing message-mode commands")))
     (progn ;; otherwise, remove crap
       (remove-hook 'post-command-hook 'org~mu4e-mime-switch-headers-or-body t)
       (org~mu4e-mime-undecorate-headers) ;; shut off org-mode stuff
