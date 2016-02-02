@@ -246,7 +246,7 @@ cleanup_filename (char *fname)
 
 	/* remove slashes, spaces, colons... */
 	for (cur = fname; *cur; ++cur)
-		if (*cur == '/' || *cur == ' ' || *cur == ':')
+		if (*cur == '/' || *cur == ' ' || *cur == ':' || *cur==',')
 			*cur = '-';
 }
 
