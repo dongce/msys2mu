@@ -47,26 +47,26 @@ int main(int argc, char **argv)
 
   char** argvv[3] ;
   
-	// argvv[0] = "c:\\windows\\explorer.exe" ; 
-	// argvv[1] = "C:\\Users\\dongil\\AppData\\Local\\Temp\\mu-500\\51e5868\\6\\ICUIRST_IP_IRST_IP_IRST_report.xlsx";
-	// argvv[2] = NULL;
-	// g_spawn_async_utf8(NULL, (gchar**)argvv, NULL,
-	// 		    G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
-	// 		    NULL);
+	argvv[0] = "c:\\windows\\explorer.exe" ; 
+	argvv[1] = "C:\\Users\\dongil\\AppData\\Local\\Temp\\mu-500\\51e5868\\6\\ICUIRST_IP_IRST_IP_IRST_report.xlsx";
+	argvv[2] = NULL;
+	g_spawn_async_utf8(NULL, (gchar**)argvv, NULL,
+			    G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
+			    NULL);
 
-  stream = get_mime_stream ( "f:\\MYSINGLE20130416\\eaglemail\\cur\\2016-01-25 1750_무제.eml");
-	parser = g_mime_parser_new_with_stream (stream);
-	g_object_unref (stream);
-	if (!parser) {
-		return FALSE;
-	}
+  // stream = get_mime_stream ( "f:\\MYSINGLE20130416\\eaglemail\\cur\\2016-01-25 1750_무제.eml");
+	// parser = g_mime_parser_new_with_stream (stream);
+	// g_object_unref (stream);
+	// if (!parser) {
+	// 	return FALSE;
+	// }
 
-	mime_msg = g_mime_parser_construct_message (parser);
-  subject  = g_mime_message_get_subject (mime_msg) ; 
+	// mime_msg = g_mime_parser_construct_message (parser);
+  // subject  = g_mime_message_get_subject (mime_msg) ; 
 
 	// FILE *file = fopen("result.txt" , "wb") ;
   // fwrite(subject, 1 , strlen(subject), file) ;
   // fclose(file) ; 
   
-  printf("%s\n" , subject) ; 
+  // printf("%s\n" , subject) ; 
 }

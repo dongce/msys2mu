@@ -398,7 +398,7 @@ mu_util_play (const char *path, gboolean allow_local, gboolean allow_remote,
 // #else
 // 		prog = "xdg-open";
 // #endif /*!__APPLE__*/
-		prog = "explorer";
+		prog = "c:\\windows\\explorer.exe" ;
 	}
 
 	if (!mu_util_program_in_path (prog)) {
@@ -407,14 +407,19 @@ mu_util_play (const char *path, gboolean allow_local, gboolean allow_remote,
 		return FALSE;
 	}
 
-	argv[0] = prog;
-	argv[1] = path;
+	
+
+	
+	argv[0] = prog ; 
+	argv[1] = path ; 
 	argv[2] = NULL;
 
 	err = NULL;
 	rv = g_spawn_async (NULL, (gchar**)&argv, NULL,
 			    G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
 			    err);
+
+	
 	return rv;
 }
 
