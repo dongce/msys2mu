@@ -228,14 +228,18 @@ Does a local-exit and does not return. In emacs versions below
   (user-error "%s" (apply 'mu4e-format frm args)))
 
 (defun mu4e~read-char-choice (prompt choices)
-  "Compatiblity wrapper for `read-char-choice'.
-That function is available which emacs-24 only."
-  (let ((choice) (ok) (inhibit-quit nil))
-    (while (not ok)
+  "Read and return one of CHOICES, prompting for PROMPT.
+Any input that is not one of CHOICES is ignored. This mu4e's
+version of `read-char-choice', that becomes case-insentive after
+trying an exact match."
+  (let ((choice) (chosen) (inhibit-quit nil))
+    (while (not chosen)
       (message nil);; this seems needed...
       (setq choice (read-char-exclusive prompt))
-      (setq ok (member choice choices)))
-    choice))
+      (setq chosen (or (member choice choices)
+		     (member (downcase choice) choices)
+		     (member (upcase choice) choices))))
+    (car chosen)))
 
 (defun mu4e-read-option (prompt options)
   "Ask user for an option from a list on the input area.
@@ -650,12 +654,13 @@ or (rfc822-string . CONTACT) otherwise."
     (setq contact (funcall mu4e-contact-rewrite-function contact)))
   (when contact
     (let ((name (plist-get contact :name))
-	   (mail (plist-get contact :mail))) 
-      (unless (and mail
-		(string-match mu4e-compose-complete-ignore-address-regexp mail))
+	   (mail (plist-get contact :mail))
+	   (ignore-rx (or mu4e-compose-complete-ignore-address-regexp "$^"))) 
+      (when (and mail (not (string-match ignore-rx mail)))
 	(cons
 	  (if name (format "%s <%s>" (mu4e~rfc822-quoteit name) mail) mail)
 	  contact)))))
+
 
 (defun mu4e~sort-contacts (contacts)
   "Destructively sort contacts (only for cycling) in order of
@@ -1206,6 +1211,11 @@ the view and compose modes."
 	(when p
 	  (add-text-properties p (point-max) '(face mu4e-footer-face)))))))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defun mu4e~quote-for-modeline (str)
+  "Quote a string to be used literally in the modeline."
+  (replace-regexp-in-string "%" "%%" str t t))
+
 
 (provide 'mu4e-utils)
 ;;; End of mu4e-utils.el

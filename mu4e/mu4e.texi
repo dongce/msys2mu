@@ -186,13 +186,20 @@ When you take @t{mu4e} into use, it's a good idea to subscribe to the
 @t{mu}/@t{mu4e}-mailing
 list@footnote{@url{http://groups.google.com/group/mu-discuss}}.
 
-If you have suggestions for improvements or bug reports, please use the
-GitHub issues list@footnote{@url{https://github.com/djcb/mu/issues}}. In
-bug reports, please clearly specify the versions of @t{mu}/@t{mu4e} and
-@command{emacs} you are using, as well as any other relevant
-details. Also, if it is about the behavior for specific messages, please
-attach the raw message (that is, the message file as it exists in your
-maildir); you can of course strip off any personal information.
+Sometimes, you might encounter some unexpected behavior while using
+@t{mu4e}. It could be a bug in @t{mu4e}, it could be an issue in other
+software. Or it could just be a misunderstanding. In any case, if you
+want to report this (either to the mailing list or to
+@url{https://github.com/djcb/mu/issues}, the latter is preferred),
+please always include the following information:
+
+@itemize
+@item what did you expect that should happen? what actually happened?
+@item can you provide some exact steps to reproduce?
+@item what version of mu4e and emacs were you using? What operating system?
+@item can you reproduce it with emacs -q and only loading mu4e?
+@item if the problem is related to some specific message, please include the raw message file (appropriately anonimized, of course)
+@end itemize
 
 @node Getting started
 @chapter Getting started
@@ -738,10 +745,10 @@ major-mode for the headers view is @code{mu4e-headers-mode}.
 @menu
 * Overview: HV Overview. What is the Header View
 * Keybindings::Do things with your keyboard
-* Marking:HV Marking. Selecting messages for doing things
+* Marking: HV Marking. Selecting messages for doing things
 * Sort order and threading::Influencing the display
-* HV Custom headers::Adding your own headers
-* HV Actions::Defining and using actions
+* Custom headers: HV Custom headers. Adding your own headers
+* Actions: HV Actions. Defining and using actions
 * Split view::Seeing both headers and messages
 @end menu
 
@@ -820,7 +827,10 @@ Jamie Zawinski's mail threading algorithm,
 found during the indexing process, and if there is no current
 user-interaction. If you do not want such automatic updates, set
 @code{mu4e-headers-auto-update} to @code{nil}.
-@item There is a hook-function @code{mu4e-headers-found-hook} available which
+@item Just before executing a search, a hook-function 
+@code{mu4e-headers-search-pre-hook} is invoked, which receives the
+search expression as its parameter.
+@item Also, there is a hook-function @code{mu4e-headers-found-hook} available which
 is invoked just after @t{mu4e} has completed showing the messages in the
 headers-view.
 @end itemize
@@ -892,7 +902,7 @@ a            execute some custom action on a header
 C-+,C--      increase / decrease the number of headers shown
 H            get help
 C-S-u        update mail & reindex
-q,z          leave the headers buffer
+q            leave the headers buffer
 @end verbatim
 
 
@@ -1199,7 +1209,7 @@ v            show details about the cryptographic signature
 C-+,C--      increase / decrease the number of headers shown
 H            get help
 C-S-u        update mail & reindex
-q,z          leave the message view
+q            leave the message view
 @end verbatim
 
 For the marking commands, please refer to @ref{Marking messages}.
@@ -1272,16 +1282,41 @@ body-text. You can change this by setting @code{mu4e-view-prefer-html}
 to @t{t}. And you can toggle this value (globally) using @kbd{h} in the
 message view; this also refreshes the message with the new setting.
 
+Note, when using html-based rendering, you don't get the hyperlink
+shortcuts the text-version provides.
+
 If there is only an html-version, or if the plain-text version is too
 short in comparison with the html part@footnote{this is e.g. for the
 case where the text-part is only a short blurb telling you to use the
 html-version; see @code{mu4e-view-html-plaintext-ratio-heuristic}},
 @t{mu4e} tries to convert the html into plain-text for display.
 
-The default way to do that is to use the @command{emacs} built-in
-@code{html2text} function. However, you can set the variable
-@code{mu4e-html2text-command} to a either a shell command or a function
+With emacs 24.4 or newer, this defaults to @code{mu4e-shr2text}, which
+uses the built-in @t{shr} renderer. For older emacs versions, this
+defaults to the built-in @code{html2text} function. In practice, the
+latter gives much better results.
+
+If you use @code{mu4e-shr2text}, it might be useful to emulate some of
+the @t{shr} key bindings, with something like:
+@lisp
+(add-hook 'mu4e-view-mode-hook
+  (lambda()
+    ;; try to emulate some of the eww key-bindings
+    (local-set-key (kbd "<tab>") 'shr-next-link)
+    (local-set-key (kbd "<backtab>") 'shr-previous-link)))
+@end lisp
+
+If you're using a dark theme, and the messages are hard to read, it can help to change
+the luminosity, e.g.:
+@lisp
+(setq shr-color-visible-luminance-min 80)
+@end lisp
+
+If your emacs does not have @t{shr} yet, it can be useful to use a
+custom method. For that, you can set the variable
+@code{mu4e-html2text-command} to either a shell command or a function
 instead.
+  
 
 @subsection Html2text commands
 
@@ -1320,32 +1355,6 @@ alternative:
 If @code{mu4e-html2text-command} refers to an elisp function, it is
 expected to take the current buffer in html as input, and transform it
 into text (just like the @code{html2text} function).
-
-For example, emacs 24.4 and later versions include the @code{eww}
-browser which uses the @code{shr} html renderer; @t{mu4e} includes a
-little snippet to uses this with @code{mu4e-html2text-command}; for
-this, add the following to your configuration:
-
-@lisp
-(require 'mu4e-contrib)
-(setq mu4e-html2text-command 'mu4e-shr2text)
-@end lisp
-
-If you use the @code{mu4e-shr2text}, it might be useful to emulate some
-of the @t{shr} key bindings, with something like:
-@lisp
-(add-hook 'mu4e-view-mode-hook
-  (lambda()
-    ;; try to emulate some of the eww key-bindings
-    (local-set-key (kbd "<tab>") 'shr-next-link)
-    (local-set-key (kbd "<backtab>") 'shr-previous-link)))
-@end lisp
-
-If you're using a dark theme, and the messages are hard to read, it can help to change
-the luminosity, e.g.:
-@lisp
-(setq shr-color-visible-luminance-min 80)
-@end lisp
 
 @node MSGV Crypto
 @section Crypto
@@ -2113,6 +2122,10 @@ the marks (@key{x}).
 
 After you have marked some messages, you can execute them with @key{x}
 (@kbd{M-x mu4e-mark-execute-all}).
+
+A hook, @code{mu4e-mark-execute-pre-hook}, is available which is run
+right before execution of each mark. The hook is called with two
+arguments, the mark and the message itself.
 
 @node Leaving the headers buffer
 @section Leaving the headers buffer
@@ -3290,9 +3303,6 @@ customize.
 ;; a  list of user's e-mail addresses
 (setq mu4e-user-mail-address-list '("foo@@bar.example.com" "cuux@@example.com")
 
-;; when you want to use some external command for text->html
-;; conversion, e.g. the 'html2text' program
-;; (setq mu4e-html2text-command "html2text")
 
 ;; the headers to show in the headers list -- a pair of a field
 ;; and its width, with `nil' meaning 'unlimited'
@@ -3570,9 +3580,10 @@ some soundfile, change as needed):
   somehow?} Yes - set @code{mu4e-headers-auto-update} to @code{nil}.
 @item @emph{I don't use @t{offlineimap}, @t{fetchmail} etc., I get my mail
 through my own mailserver. What should I use for
-@code{mu4e-get-mail-command}}? Use @t{"true"} (or don't do anything, it's the
-default). This makes getting mail a no-op, but the messages are still
-re-indexed.
+@code{mu4e-get-mail-command}}? Use the literal string @t{"true"} (or
+don't do anything, it's the default) which then uses @t{/bin/true} (a
+command that does nothing and always succeeds). This makes getting mail
+a no-op, but the messages are still re-indexed.
 @item @emph{How can I re-index my messages without getting new mail?}
 Use @kbd{M-x mu4e-update-index}
 @item @emph{When I try to run @t{mu index} while @t{mu4e} is running I get
@@ -3627,7 +3638,7 @@ Yes, if you have @t{Xapian} 1.2.8 or newer, and set the environment
 variable @t{XAPIAN_CJK_NGRAM} to non-empty before indexing, both when
 using @t{mu} from the command-line and from @t{mu4e}.
 @item @emph{How can I customize the function to select a folder?}
-The @t{mu4e-completing-read} variable can be customized to select a
+The @t{mu4e-completing-read-function} variable can be customized to select a
 folder in any way. The variable can be set to a function that receives
 five arguments, following @t{completing-read}. The default value is
 @code{ido-completing-read}; to use emacs's default behaviour, set the
@@ -3666,7 +3677,8 @@ like Gmail does?} Yes -- see @ref{Including related messages}.
 @item @emph{There seem to be a lot of duplicate messages -- how can I get rid
 of them?} See @ref{Skipping duplicates}.
 @item @emph{How can I use the @t{eww} browser to view rich-text messages?}
-See @ref{Html2text functions}.
+With a new enough emacs, this happens automatically. See @ref{Html2text
+functions} for some details.
 @item @emph{Some messages are almost unreadable in emacs - can I view them in
 an external web browser?} Indeed, airlines often send messages that
 heavily depend on html and are hard to digest inside emacs. Fortunately,
@@ -3697,6 +3709,14 @@ with @t{msg2pdf}, which is a program used to convert the messages to
 pdf, and which depends on WebKit, which in some cases needs
 @t{nspluginwrapper} and it waits for a long time if it's not there. So,
 installing @t{nspluginwrapper} prevents that.
+@item @emph{Can I 'bounce' or 'resend' messages?} 
+Yes - it is possible to edit a (copy of) an existing message and then
+send it, using @code{M-x mu4e-compose-resend}. This gives you a raw copy
+of the message, including all headers, encoded parts and so on. Reason
+for this is that for resending, it is important not to change anything
+(except perhaps for the 'To:' address when bouncing); since we cannot
+losslessly decode an existing message, you get the raw version.
+
 @end enumerate
 
 @node Writing messages
@@ -3731,6 +3751,10 @@ configuration.
 and @t{mu4e} automatically removes the (hidden) @t{References} header as
 well when sending it. This makes the message show up as a top-level
 message rather than as a response.
+@item @emph{How can I attach an existing message?} Use @code{mu4e-action-capture-message}
+ (i.e., @kbd{a c} in the headers view) to 'capture' the to-be-attached
+ message, then when editing the message, use @kbd{M-x
+ mu4e-compose-attach-captured-message}.
 @item @emph{How can I sign or encrypt messages?} You can do so using @command{emacs}'
 MIME-support -- check the @t{Attachments}-menu while composing a
 message. Also see @ref{Signing and encrypting}.

@@ -160,6 +160,29 @@ query have been received and are displayed."
   :type 'hook
   :group 'mu4e-headers)
 
+(defcustom mu4e-headers-search-bookmark-hook nil
+  "Hook run just after we invoke a bookmarked search. This
+function receives the query as its parameter.
+
+The reason to use this instead of `mu4e-headers-search-pre-hook'
+is if you only want to execute a hook when a search is entered
+via a bookmark, e.g. if you'd like to treat the bookmarks as a
+custom folder and change the options for the search,
+e.g. `mu4e-headers-show-threads', `mu4e-headers-include-related',
+`mu4e-headers-skip-duplicates` or `mu4e-headers-results-limit'."
+  :type 'hook
+  :group 'mu4e-headers)
+
+(defcustom mu4e-headers-search-pre-hook nil
+  "Hook run just before executing a new search operation. This
+function receives the query as its parameter.
+
+This is a more general hook facility than the
+`mu4e-headers-search-bookmark-hook'. It gets called on every
+executed search, not just those that are invoked via bookmarks,
+but also manually invoked searches."
+  :type 'hook
+  :group 'mu4e-headers)
 
 (defvar mu4e-headers-sort-field :date
   "Field to sort the headers by.
@@ -343,7 +366,10 @@ present, don't do anything."
       (when (and (mu4e~headers-view-this-message-p docid)
 	      (buffer-live-p mu4e~view-buffer))
 	(with-current-buffer mu4e~view-buffer
-	  (kill-buffer-and-window ))))))
+	  ;; XXX it seems this sometimes fails; investigate;
+	  ;; for now, just ignore the error
+	  (ignore-errors
+	    (kill-buffer-and-window)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -628,8 +654,6 @@ after the end of the search results."
       (define-key map "V" 'mu4e-headers-toggle-skip-duplicates)
 
       (define-key map "q" 'mu4e~headers-quit-buffer)
-      (define-key map "z" 'mu4e~headers-quit-buffer)
-
       (define-key map "g" 'mu4e-headers-rerun-search) ;; for compatibility
 
       (define-key map "%" 'mu4e-headers-mark-pattern)
@@ -732,9 +756,13 @@ after the end of the search results."
 	  '("Mark for move" . mu4e-headers-mark-for-move))
 	(define-key menumap [sepa1] '("--"))
 
-	(define-key menumap [compose-new]  '("Compose new" . mu4e-compose-new))
+
+	(define-key menumap [resend]  '("Resend" . mu4e-compose-resend))
 	(define-key menumap [forward]  '("Forward" . mu4e-compose-forward))
 	(define-key menumap [reply]  '("Reply" . mu4e-compose-reply))
+	(define-key menumap [compose-new]  '("Compose new" . mu4e-compose-new))
+      
+    
 	(define-key menumap [sepa2] '("--"))
 
 	(define-key menumap [query-next]  '("Next query" . mu4e-headers-query-next))
@@ -997,11 +1025,14 @@ the query history stack."
 	global-mode-string
 	'(:eval
 	   (concat
-	     (propertize mu4e~headers-last-query 'face 'mu4e-modeline-face)
+	    (propertize
+	     (mu4e~quote-for-modeline mu4e~headers-last-query)
+	     'face 'mu4e-modeline-face)
 	     " "
 	     (mu4e-context-label)))))
     
     (switch-to-buffer buf)
+    (run-hook-with-args 'mu4e-headers-search-pre-hook expr)
     (mu4e~proc-find
       expr
       mu4e-headers-show-threads
@@ -1287,6 +1318,7 @@ the search."
   (let ((expr
 	  (or expr
 	    (mu4e-ask-bookmark (if edit "Select bookmark: " "Bookmark: ")))))
+    (run-hook-with-args 'mu4e-headers-search-bookmark-hook expr)
     (mu4e-headers-search expr (when edit "Edit bookmark: ") edit)))
 
 (defun mu4e-headers-search-bookmark-edit ()

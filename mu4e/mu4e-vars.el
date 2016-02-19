@@ -60,10 +60,10 @@ link."
 Common values are \"offlineimap\", \"fetchmail\" or \"mbsync\", but
 arbitrary shell-commands can be used.
 
-When set to \"true\" (the default), the command simply finishes
-succesfully (running the 'true' command) without retrieving any
-mail. This can be useful when mail is already retrieved in another
-way."
+When set to the literal string \"true\" (the default), the
+command simply finishes succesfully (running the 'true' command)
+without retrieving any mail. This can be useful when mail is
+already retrieved in another way."
   :type 'string
   :group 'mu4e
   :safe 'stringp)
@@ -711,7 +711,7 @@ mu4e-compose-mode."
 	 :sortable :subject))
      (:to .
        ( :name "To"
-	 :shortname "T"
+	 :shortname "To"
 	 :help "Recipient of the message"
 	 :sortable t)))
   "An alist of all possible header fields and information about them.
