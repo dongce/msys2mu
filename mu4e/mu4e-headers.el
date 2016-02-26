@@ -244,7 +244,7 @@ match.
 * PARAM-FUNC is function that is evaluated once, and its value is then passed to
 PREDICATE-FUNC as PARAM. This is useful for getting user-input.")
 
-(defvar mu4e-headers-show-threads t
+(defvar mu4e-headers-show-threads nil
   "Whether to show threads in the headers list.")
 
 (defvar mu4e-headers-full-search nil
