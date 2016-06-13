@@ -655,7 +655,7 @@ mu_maildir_get_flags_from_path (const char *path)
 
 		info = strrchr (path, '2');
 		if (!info || info == path ||
-		    (info[-1] != ':' && info[-1] != '!') ||
+		    (info[-1] != ';' && info[-1] != '!') ||
 		    (info[1] != ','))
 			return MU_FLAG_NONE;
 		else
@@ -692,7 +692,7 @@ get_new_path (const char *mdir, const char *mfile, MuFlags flags,
 		const char *flagstr;
 		flagstr = mu_flags_to_str_s (flags, MU_FLAG_TYPE_MAILFILE);
 
-		return g_strdup_printf ("%s%ccur%c%s:2,%s%s",
+		return g_strdup_printf ("%s%ccur%c%s;2,%s%s",
 					mdir, G_DIR_SEPARATOR, G_DIR_SEPARATOR,
 					mfile, flagstr,
 					custom_flags ? custom_flags : "");
@@ -816,11 +816,11 @@ msg_move_check_pre (const gchar *src, const gchar *dst, GError **err)
 			(err, MU_ERROR_FILE,
 			 "target is not an absolute path: '%s'", dst);
 
-	if (access (src, R_OK) != 0)
+	if (g_access (src, R_OK) != 0)
 		return mu_util_g_set_error (err, MU_ERROR_FILE,
 					    "cannot read %s",  src);
 
-	if (access (dst, F_OK) != 0)
+	if (g_access (dst, F_OK) != 0)
 		return TRUE;
 
 	/* target exist; we simply overwrite it, unless target has a different
@@ -840,13 +840,15 @@ static gboolean
 msg_move_check_post (const char *src, const char *dst, GError **err)
 {
 	/* double check -- is the target really there? */
-	if (access (dst, F_OK) != 0)
+	if (g_access (dst, F_OK) != 0)
 		return mu_util_g_set_error
 			(err, MU_ERROR_FILE, "can't find target (%s)",  dst);
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
-	if (access (src, F_OK) == 0)
+	if (g_access (src, F_OK) == 0)
 		return mu_util_g_set_error
 			(err, MU_ERROR_FILE, "source still there (%s)", src);
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	return TRUE;
 }
@@ -855,12 +857,15 @@ msg_move_check_post (const char *src, const char *dst, GError **err)
 static gboolean
 msg_move (const char* src, const char *dst, GError **err)
 {
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	if (!msg_move_check_pre (src, dst, err))
 		return FALSE;
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
-	if (rename (src, dst) != 0)
+	if (g_rename (src, dst) != 0)
 		return mu_util_g_set_error
 			(err, MU_ERROR_FILE,"error moving %s to %s", src, dst);
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	return msg_move_check_post (src, dst, err);
 }
@@ -874,8 +879,9 @@ mu_maildir_move_message (const char* oldpath, const char* targetmdir,
 	gboolean rv;
 	gboolean src_is_target;
 
+	printf("%s %s:%d\n", oldpath, __FILE__, __LINE__) ; 
 	g_return_val_if_fail (oldpath, FALSE);
-
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	newfullpath = mu_maildir_get_new_path (oldpath, targetmdir,
 					       newflags, new_name);
 	if (!newfullpath) {
@@ -883,8 +889,10 @@ mu_maildir_move_message (const char* oldpath, const char* targetmdir,
 				     "failed to determine targetpath");
 		return NULL;
 	}
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	src_is_target = (g_strcmp0 (oldpath, newfullpath) == 0);
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	if (!ignore_dups && src_is_target) {
 		mu_util_g_set_error (err, MU_ERROR_FILE_TARGET_EQUALS_SOURCE,
@@ -892,6 +900,7 @@ mu_maildir_move_message (const char* oldpath, const char* targetmdir,
 		return NULL;
 	}
 
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	if (!src_is_target) {
 		rv = msg_move (oldpath, newfullpath, err);
 		if (!rv) {
@@ -899,6 +908,7 @@ mu_maildir_move_message (const char* oldpath, const char* targetmdir,
 			return NULL;
 		}
 	}
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	return newfullpath;
 }
