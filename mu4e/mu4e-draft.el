@@ -297,7 +297,7 @@ If there is just one recipient of ORIGMSG do nothing."
 (defun mu4e~draft-message-filename-construct (&optional flagstr)
   "Construct a randomized name for a message file with flags FLAGSTR.
 It looks something like
-  <time>-<random>.<hostname>:2,
+  <time>-<random>.<hostname>;2,
 You can append flags."
   (let* ((sysname (if (fboundp 'system-name)
 		      (system-name)
@@ -307,7 +307,7 @@ You can append flags."
 		      (substring sysname
 				 (string-match "^[^.]+" sysname)
 				 (match-end 0))))))
-    (format "%s.%04x%04x%04x%04x.%s:2,%s"
+    (format "%s.%04x%04x%04x%04x.%s;2,%s"
       (format-time-string "%s" (current-time))
       (random 65535) (random 65535) (random 65535) (random 65535)
       hostname (or flagstr ""))))
