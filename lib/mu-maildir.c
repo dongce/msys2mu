@@ -843,10 +843,12 @@ msg_move_check_post (const char *src, const char *dst, GError **err)
 	if (g_access (dst, F_OK) != 0)
 		return mu_util_g_set_error
 			(err, MU_ERROR_FILE, "can't find target (%s)",  dst);
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	if (g_access (src, F_OK) == 0)
 		return mu_util_g_set_error
 			(err, MU_ERROR_FILE, "source still there (%s)", src);
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	return TRUE;
 }
@@ -855,12 +857,15 @@ msg_move_check_post (const char *src, const char *dst, GError **err)
 static gboolean
 msg_move (const char* src, const char *dst, GError **err)
 {
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	if (!msg_move_check_pre (src, dst, err))
 		return FALSE;
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	if (g_rename (src, dst) != 0)
 		return mu_util_g_set_error
 			(err, MU_ERROR_FILE,"error moving %s to %s", src, dst);
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	return msg_move_check_post (src, dst, err);
 }
@@ -874,8 +879,9 @@ mu_maildir_move_message (const char* oldpath, const char* targetmdir,
 	gboolean rv;
 	gboolean src_is_target;
 
+	printf("%s %s:%d\n", oldpath, __FILE__, __LINE__) ; 
 	g_return_val_if_fail (oldpath, FALSE);
-
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	newfullpath = mu_maildir_get_new_path (oldpath, targetmdir,
 					       newflags, new_name);
 	if (!newfullpath) {
@@ -883,8 +889,10 @@ mu_maildir_move_message (const char* oldpath, const char* targetmdir,
 				     "failed to determine targetpath");
 		return NULL;
 	}
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	src_is_target = (g_strcmp0 (oldpath, newfullpath) == 0);
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	if (!ignore_dups && src_is_target) {
 		mu_util_g_set_error (err, MU_ERROR_FILE_TARGET_EQUALS_SOURCE,
@@ -892,6 +900,7 @@ mu_maildir_move_message (const char* oldpath, const char* targetmdir,
 		return NULL;
 	}
 
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	if (!src_is_target) {
 		rv = msg_move (oldpath, newfullpath, err);
 		if (!rv) {
@@ -899,6 +908,7 @@ mu_maildir_move_message (const char* oldpath, const char* targetmdir,
 			return NULL;
 		}
 	}
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	return newfullpath;
 }

@@ -878,25 +878,31 @@ mu_msg_move_to_maildir (MuMsg *self, const char *maildir,
 
 	/* targetmdir is the full path to maildir, i.e.,
 	 * /home/foo/Maildir/inbox */
+	printf("%s %s:%d\n", maildir, __FILE__, __LINE__) ; 
 	targetmdir = get_target_mdir (self, maildir, err);
 	if (!targetmdir)
 		return FALSE;
 
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	newfullpath = mu_maildir_move_message (mu_msg_get_path (self),
 					       targetmdir, flags,
 					       ignore_dups, new_name,
 					       err);
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	if (!newfullpath) {
 		g_free (targetmdir);
 		return FALSE;
 	}
 
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	/* clear the old backends */
 	mu_msg_doc_destroy  (self->_doc);
 	self->_doc = NULL;
 
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	mu_msg_file_destroy (self->_file);
 
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	/* and create a new one */
 	self->_file = mu_msg_file_new (newfullpath, maildir, err);
 	g_free (targetmdir);

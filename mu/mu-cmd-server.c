@@ -1224,20 +1224,26 @@ do_move (MuStore *store, unsigned docid, MuMsg *msg, const char *maildir,
 	gchar *sexp;
 	gboolean different_mdir;
 
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	if (!maildir) {
+		printf("%s:%d\n", __FILE__, __LINE__) ; 
 		maildir = mu_msg_get_maildir (msg);
 		different_mdir = FALSE;
-	} else
+	} else{
 		/* are we moving to a different mdir, or is it just flags? */
 		different_mdir =
 			(g_strcmp0 (maildir, mu_msg_get_maildir(msg)) != 0);
+		printf("%s:%d\n", __FILE__, __LINE__) ; 
 
+	}
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	if (!mu_msg_move_to_maildir (msg, maildir, flags, TRUE,
 				     new_name, err))
 		return MU_G_ERROR_CODE (err);
 
 	/* after mu_msg_move_to_maildir, path will be the *new* path,
 	 * and flags and maildir fields will be updated as wel */
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	rv = mu_store_update_msg (store, docid, msg, err);
 	if (rv == MU_STORE_INVALID_DOCID) {
 		mu_util_g_set_error (err, MU_ERROR_XAPIAN,
@@ -1245,9 +1251,11 @@ do_move (MuStore *store, unsigned docid, MuMsg *msg, const char *maildir,
 		print_and_clear_g_error (err);
 	}
 
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	sexp = mu_msg_to_sexp (msg, docid, NULL, MU_MSG_OPTION_VERIFY);
 	/* note, the :move t thing is a hint to the frontend that it
 	 * could remove the particular header */
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	print_expr ("(:update %s :move %s)", sexp,
 		    different_mdir ? "t" : "nil");
 	g_free (sexp);
@@ -1263,6 +1271,8 @@ move_docid (MuStore *store, unsigned docid, const char* flagstr,
 	MuError		 rv;
 	MuFlags		 flags;
 
+	g_debug("%s:%d", __FILE__, __LINE__) ; 
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	rv  = MU_ERROR;
 	msg = mu_store_get_msg (store, docid, err);
 
@@ -1301,20 +1311,28 @@ move_msgid_maybe (ServerContext *ctx, GHashTable *args, GError **err)
 	GSList		*docids, *cur;
 	const char*	 maildir, *msgid, *flagstr;
 	gboolean	 new_name;
+	g_debug("%s:%d", __FILE__, __LINE__) ; 
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	maildir	 = get_string_from_args (args, "maildir", TRUE, err);
 	msgid	 = get_string_from_args (args, "msgid", TRUE, err);
 	flagstr	 = get_string_from_args (args, "flags", TRUE, err);
 	new_name = get_bool_from_args (args, "newname", TRUE, err);
+	g_debug("%s:%d", __FILE__, __LINE__) ; 
+	printf("%x,%x, %x %s:%d \n", msgid, flagstr, maildir, __FILE__, __LINE__) ; 
 
 	/*  you cannot use 'maildir' for multiple messages at once */
 	if (!msgid || !flagstr || maildir)
 		return FALSE;
 
+	g_debug("%s:%d", __FILE__, __LINE__) ; 
+	printf("%s:%d %s %s, %s\n", msgid, flagstr, maildir, __FILE__, __LINE__) ; 
 	if (!(docids = get_docids_from_msgids (ctx->query, msgid, err))) {
 		print_and_clear_g_error (err);
 		return TRUE;
 	}
+	g_debug("%s:%d", __FILE__, __LINE__) ; 
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	for (cur = docids; cur; cur = g_slist_next(cur))
 		if (move_docid (ctx->store, GPOINTER_TO_SIZE(cur->data),
@@ -1350,10 +1368,11 @@ cmd_move (ServerContext *ctx, GHashTable *args, GError **err)
 	 * it in move_msgid_maybe */
 	if (move_msgid_maybe (ctx, args, err))
 		return MU_OK;
-
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	maildir	 = get_string_from_args (args, "maildir", TRUE, err);
 	flagstr	 = get_string_from_args (args, "flags", TRUE, err);
 	new_name = get_bool_from_args (args, "newname", TRUE, err);
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	docid = determine_docid (ctx->query, args, err);
 	if (docid == MU_STORE_INVALID_DOCID ||
@@ -1361,10 +1380,12 @@ cmd_move (ServerContext *ctx, GHashTable *args, GError **err)
 		print_and_clear_g_error (err);
 		return MU_OK;
 	}
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	/* if maildir was not specified, take the current one */
 	if (!maildir)
 		maildir = mu_msg_get_maildir (msg);
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 	/* determine the real target flags, which come from the
 	 * flags-parameter we received (ie., flagstr), if any, plus
@@ -1374,6 +1395,7 @@ cmd_move (ServerContext *ctx, GHashTable *args, GError **err)
 	else
 		flags = mu_msg_get_flags (msg);
 
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 	if (flags == MU_FLAG_INVALID) {
 		print_error (MU_ERROR_IN_PARAMETERS, "invalid flags");
 		goto leave;
@@ -1382,6 +1404,7 @@ cmd_move (ServerContext *ctx, GHashTable *args, GError **err)
 	if ((do_move (ctx->store, docid, msg, maildir, flags, new_name, err)
 	     != MU_OK))
 		print_and_clear_g_error (err);
+	printf("%s:%d\n", __FILE__, __LINE__) ; 
 
 leave:
 	mu_msg_unref (msg);
