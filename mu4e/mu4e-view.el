@@ -253,7 +253,7 @@ found."
     "\n"
     (let ((body (mu4e-message-body-text msg)))
       (when (fboundp 'add-face-text-property)
-        (add-face-text-property 0 (length body) 'mu4e-view-body-face t body))
+        (add-face-text-property 0 (length body) 'mu4e-view-body-face nil body))
       body)))
 
 (defun mu4e~view-embedded-winbuf ()
