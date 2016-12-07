@@ -1,0 +1,3887 @@
+diff --git a/b.sh b/b.sh
+new file mode 100644
+index 0000000..f870508
+--- /dev/null
++++ b/b.sh
+@@ -0,0 +1,2 @@
++autoreconf -i
++./configure --prefix=/usr/local/
+diff --git a/configure.ac b/configure.ac
+index 63814e5..1daee3a 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -111,7 +111,7 @@ AS_IF([test "x$ac_cv_member_struct_dirent_d_ino" != "xyes"],
+ 
+ # we need these
+ AC_CHECK_FUNCS([memset memcpy realpath setlocale strerror getpass])
+-AC_CHECK_FUNC(timegm,[],[AC_MSG_ERROR([missing required function timegm])])
++dnl AC_CHECK_FUNC(timegm,[],[AC_MSG_ERROR([missing required function timegm])])
+ 
+ # require pkg-config
+ AC_PATH_PROG([PKG_CONFIG], [pkg-config], [no])
+diff --git a/lib/glob.c b/lib/glob.c
+new file mode 100644
+index 0000000..222504c
+--- /dev/null
++++ b/lib/glob.c
+@@ -0,0 +1,197 @@
++/**
++ * Navit, a modular navigation system.
++ * Copyright (C) 2005-2008 Navit Team
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * version 2 as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the
++ * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++ * Boston, MA  02110-1301, USA.
++ */
++
++/*
++ * @file glob.c
++ */
++
++#include <config.h>
++
++#ifndef HAVE_GLOB
++#if defined _WIN32 || defined _WIN32_WCE
++#include <windows.h>
++#include "glob.h"
++
++/*
++ * @brief searches for all the pathnames matching pattern according to the rules
++ * which is similar to the rules used by common shells.
++ * here: expanding of ´*´ and ´?´ only in filenames
++ * @param pattern: no tilde expansion or parameter substitution is done.
++ * @param flags: not supported here
++ * @param errfunc: not supported here
++ * @param pglob: struct with array containing the matched files/directories
++ * @return FALSE on error.
++ */
++int glob(const char *pattern, int flags,
++          int (*errfunc)(const char *epath, int eerrno),
++          glob_t *pglob)
++{
++	char           *pathend,
++	               *filename;
++	int             pathlen;
++	HANDLE          hFiles;
++#ifndef UNICODE
++	WIN32_FIND_DATA xFindData;
++	hFiles = FindFirstFile (pattern, &xFindData);
++#else
++	int              len = strlen(pattern) * sizeof(wchar_t*);
++	wchar_t         *pathname = malloc(len);
++	WIN32_FIND_DATAW xFindData;
++	mbstowcs (pathname, pattern, len);
++	hFiles = FindFirstFile (pathname, &xFindData);
++#endif
++
++	if(hFiles == INVALID_HANDLE_VALUE)
++	{
++		return 1;
++	}
++	/* store the path information */
++	if (NULL == (pathend = max (strrchr (pattern, '\\'), strrchr (pattern, '/'))))
++			pathend = (char *) pattern;
++	pathlen = pathend - pattern + 1;
++
++	/* glob */
++	pglob->gl_pathc = 0;    /* number of founded files */
++	pglob->gl_offs = 0;     /* not needed */
++	pglob->gl_pathv = malloc(sizeof(char*));	/* list of file names */
++
++	do
++	{
++		pglob->gl_pathc++;
++		pglob->gl_pathv = realloc (pglob->gl_pathv, pglob->gl_pathc * sizeof(char*));
++#ifndef UNICODE
++		filename = xFindData.cFileName;
++#else
++		len = wcslen(xFindData.cFileName) * sizeof(char*);
++		filename = malloc (len);
++		wcstombs (filename, xFindData.cFileName, len);
++#endif
++		pglob->gl_pathv[pglob->gl_pathc - 1] = malloc ((pathlen + strlen (filename) + 1) * sizeof(char*));
++		strncpy (pglob->gl_pathv[pglob->gl_pathc - 1], pattern, pathlen);
++		// strcpy (pglob->gl_pathv[pglob->gl_pathc - 1] + pathlen - 1, filename);
++		// The above line should be uncommented later. Currently, the blow line needs to be in use.
++		// If not, navit on WinCE / Win32 cannot "find" the maps and bookmarks folder
++		strcpy (pglob->gl_pathv[pglob->gl_pathc - 1] + pathlen, filename);
++	} while (FindNextFile (hFiles, &xFindData));
++
++	FindClose(hFiles);
++	return 0;
++}
++#else
++
++#include <dirent.h>
++#include <string.h>
++#include <fnmatch.h>
++#include "debug.h"
++#include "glob.h"
++
++static int
++glob_requires_match(const char *pattern, int flags)
++{
++	for (;;) {
++		switch (*pattern++) {
++		case '\0':
++			return 0;
++		case '?':
++		case '*':
++		case '[':
++			return 1;
++		case '\\':
++			if (!*pattern++)
++				return 0;
++		}
++	}
++	return 0;
++}
++
++static int
++glob_recursive(const char *path1, const char *path2, const char *pattern, int flags, int (*errfunc) (const char *epath, int eerrno), glob_t *pglob)
++{
++	const char *next;
++	char *fname,*path=malloc(strlen(path1)+strlen(path2)+2);
++	int flen;
++	strcpy(path, path1);
++	if (path1[0] && path2[0] && (path1[1] != '\0' || path1[0] != '/'))
++		strcat(path, "/");
++	strcat(path, path2);
++	if (!strlen(pattern)) {
++		dbg(1,"found %s\n",path);
++		pglob->gl_pathv=realloc(pglob->gl_pathv, (pglob->gl_pathc+1)*sizeof(char *));
++		if (!pglob->gl_pathv) {
++			pglob->gl_pathc=0;
++			return GLOB_NOSPACE;
++		}
++		pglob->gl_pathv[pglob->gl_pathc++]=path;
++		return 0;
++	}
++	dbg(1,"searching for %s in %s\n",pattern,path);
++	flen=strcspn(pattern,"/");
++	next=pattern+flen;
++	if (*next == '/')
++		next++;
++	fname=malloc(flen+1);
++	strncpy(fname, pattern, flen);
++	fname[flen]='\0';
++	if (glob_requires_match(fname, 0)) {
++		DIR *dh;
++		struct dirent *de;
++		dbg(1,"in dir %s search for %s\n",path,fname);
++		dh=opendir(path);
++		if (dh) {
++			while ((de=readdir(dh))) {
++				if (fnmatch(fname,de->d_name,0) == 0) {
++					glob_recursive(path, de->d_name, next, flags, errfunc, pglob);
++				}
++			}
++			closedir(dh);
++		}	
++	} else {
++		glob_recursive(path, fname, next, flags, errfunc, pglob);
++	}
++	free(fname);
++	free(path);
++	return 0;
++}
++
++int
++glob(const char *pattern, int flags, int (*errfunc) (const char *epath, int eerrno), glob_t *pglob)
++{
++	pglob->gl_pathc=0;
++	pglob->gl_pathv=NULL;
++	if (pattern[0] == '/')
++		return glob_recursive("/", "", pattern+1, flags, errfunc, pglob);
++	else
++		return glob_recursive("", "", pattern, flags, errfunc, pglob);
++}
++
++#endif     /* _WIN32 || _WIN32_WCE */
++
++void globfree(glob_t *pglob)
++{
++	int i;
++
++	for (i=0; i < pglob->gl_pathc; i++)
++	{
++		free (pglob->gl_pathv[i]);
++	}
++	free (pglob->gl_pathv);
++	pglob->gl_pathc = 0;
++}
++
++#endif     /* HAVE_GLOB */
+diff --git a/lib/glob.h b/lib/glob.h
+new file mode 100644
+index 0000000..d36ac29
+--- /dev/null
++++ b/lib/glob.h
+@@ -0,0 +1,19 @@
++#ifndef _GLOB_H_
++#define _GLOB_H_
++
++#ifndef HAVE_GLOB
++
++typedef struct {
++  size_t   gl_pathc;  /* count of file names */
++  char   **gl_pathv;  /* list of file names */
++  size_t   gl_offs;   /* slots to reserve in gl_pathv */
++} glob_t;
++
++int  glob(const char *pattern, int flags, int (*errfunc)(const char *epath, int eerrno), glob_t *pglob);
++void globfree(glob_t *pglob);
++
++#define GLOB_NOSPACE 1
++
++#endif
++
++#endif /* _GLOB_H_ */
+diff --git a/lib/mu-contacts.c b/lib/mu-contacts.c
+index 48646ac..cb442d4 100644
+--- a/lib/mu-contacts.c
++++ b/lib/mu-contacts.c
+@@ -67,7 +67,7 @@ load_key_file (const char *path)
+ 	/* of course this is racy, but it's only for giving more
+ 	 * meaningful errors to users */
+ 	file_exists = TRUE;
+-	if (access(path, F_OK) != 0) {
++	if (g_access(path, F_OK) != 0) {
+ 		if (errno != ENOENT) {
+ 			g_warning ("cannot open %s: %s", path, strerror(errno));
+ 			return NULL;
+@@ -458,7 +458,7 @@ mu_contacts_destroy (MuContacts *self)
+ 	    mu_contacts_serialize (self))
+ 		MU_WRITE_LOG("serialized contacts cache %s",
+ 			     self->_path);
+-	
++
+ 	if (self->_ccache)
+ 		g_key_file_free (self->_ccache);
+ 
+diff --git a/lib/mu-date.c b/lib/mu-date.c
+index 280b067..76c0820 100644
+--- a/lib/mu-date.c
++++ b/lib/mu-date.c
+@@ -25,6 +25,46 @@
+ #include "mu-date.h"
+ #include "mu-str.h"
+ 
++void
++setenv(char *var, char *val, int overwrite)
++{
++	char *str=g_strdup_printf("%s=%s",var,val);
++	//if (overwrite || ! getenv(var) )
++	putenv(str);
++	g_free(str);
++}
++
++int unsetenv(const char *name)
++{
++  size_t len;
++  char **ep;
++
++  if (name == NULL || *name == '\0' || strchr (name, '=') != NULL)
++    {
++      return -1;
++    }
++
++  len = strlen (name);
++
++  ep = _environ;
++  while (*ep != NULL)
++    if (!strncmp (*ep, name, len) && (*ep)[len] == '=')
++      {
++    /* Found it.  Remove this pointer by moving later ones back.  */
++    char **dp = ep;
++
++    do
++      dp[0] = dp[1];
++    while (*dp++);
++    /* Continue the loop in case NAME appears again.  */
++      }
++    else
++      ++ep;
++
++  return 0;
++}
++
++
+ const char*
+ mu_date_str_s (const char* frm, time_t t)
+ {
+@@ -227,6 +267,36 @@ mu_date_interpret (const char *datespec, gboolean is_begin)
+ }
+ 
+ 
++#include <config.h>
++// #include "timegm.h"
++
++#ifndef HAVE_TIMEGM
++
++#include <stdlib.h> // For setenv() or putenv()
++#include <time.h>
++
++
++time_t
++timegm(struct tm *tm)
++{
++    static int set_tz = 0;
++    if (!set_tz) {
++#ifdef HAVE__PUTENV_S
++	_putenv_s("TZ", "");
++#elif defined HAVE_SETENV
++	setenv("TZ", "", 1);
++#else
++	putenv(("TZ="));
++#endif
++	tzset();
++	set_tz = 1;
++    }
++    return mktime(tm);
++}
++
++#endif
++
++
+ time_t
+ mu_date_str_to_time_t (const char* date, gboolean local)
+ {
+diff --git a/lib/mu-index.c b/lib/mu-index.c
+index 1a96bce..2191183 100644
+--- a/lib/mu-index.c
++++ b/lib/mu-index.c
+@@ -193,11 +193,11 @@ on_run_maildir_msg (const char *fullpath, const char *mdir,
+ 	gboolean updated;
+ 
+ 	/* protect against too big messages */
+-	if (G_UNLIKELY(statbuf->st_size > data->_max_filesize)) {
+-		g_warning ("ignoring because bigger than %u bytes: %s",
+-			   data->_max_filesize, fullpath);
+-		return MU_OK; /* not an error */
+-	}
++	// if (G_UNLIKELY(statbuf->st_size > data->_max_filesize)) {
++	// 	g_warning ("ignoring because bigger than %u bytes: %s",
++	// 		   data->_max_filesize, fullpath);
++	// 	return MU_OK; /* not an error */
++	// }
+ 
+ 	result = run_msg_callback_maybe (data);
+ 	if (result != MU_OK)
+@@ -287,7 +287,7 @@ check_path (const char *path)
+ 		return FALSE;
+ 	}
+ 
+-	if (access (path, R_OK) != 0) {
++	if (g_access (path, R_OK) != 0) {
+ 		g_warning ("%s: cannot open '%s': %s",
+ 			   __func__, path, strerror (errno));
+ 		return FALSE;
+@@ -441,7 +441,7 @@ typedef struct _CleanupData CleanupData;
+ static MuError
+ foreach_doc_cb (const char* path, CleanupData *cudata)
+ {
+-	if (access (path, R_OK) != 0) {
++	if (g_access (path, R_OK) != 0) {
+ 		if (errno != EACCES)
+ 			g_debug ("cannot access %s: %s", path, strerror(errno));
+ 		if (!mu_store_remove_path (cudata->_store, path))
+diff --git a/lib/mu-maildir.c b/lib/mu-maildir.c
+index e737a86..01cd004 100644
+--- a/lib/mu-maildir.c
++++ b/lib/mu-maildir.c
+@@ -48,12 +48,9 @@
+  * and return it in the d_type parameter
+  */
+ #ifdef HAVE_STRUCT_DIRENT_D_TYPE
+-#define GET_DTYPE(DE,FP)						   \
+-	((DE)->d_type == DT_UNKNOWN ? mu_util_get_dtype_with_lstat((FP)) : \
+-	 (DE)->d_type)
++#define GET_DTYPE(DE,FP) mu_util_get_dtype_with_lstat((FP)) 
+ #else
+-#define GET_DTYPE(DE,FP)			                           \
+-	mu_util_get_dtype_with_lstat((FP))
++#define GET_DTYPE(DE,FP) mu_util_get_dtype_with_lstat((FP))
+ #endif /*HAVE_STRUCT_DIRENT_D_TYPE*/
+ 
+ 
+@@ -184,25 +181,26 @@ get_target_fullpath (const char* src, const gchar *targetpath, GError **err)
+ gboolean
+ mu_maildir_link (const char* src, const char *targetpath, GError **err)
+ {
+-	gchar *targetfullpath;
+-	int rv;
+-
+-	g_return_val_if_fail (src, FALSE);
+-	g_return_val_if_fail (targetpath, FALSE);
+-
+-	targetfullpath = get_target_fullpath (src, targetpath, err);
+-	if (!targetfullpath)
+-		return FALSE;
+-
+-	rv = symlink (src, targetfullpath);
+-
+-	if (rv != 0)
+-		mu_util_g_set_error (err, MU_ERROR_FILE_CANNOT_LINK,
+-				     "error creating link %s => %s: %s",
+-				     targetfullpath, src, strerror (errno));
+-	g_free (targetfullpath);
+-
+-	return rv == 0 ? TRUE: FALSE;
++//gchar *targetfullpath;
++//int rv;
++//
++//g_return_val_if_fail (src, FALSE);
++//g_return_val_if_fail (targetpath, FALSE);
++//
++//targetfullpath = get_target_fullpath (src, targetpath, err);
++//if (!targetfullpath)
++//	return FALSE;
++//
++//rv = symlink (src, targetfullpath);
++//
++//if (rv != 0)
++//	mu_util_g_set_error (err, MU_ERROR_FILE_CANNOT_LINK,
++//			     "error creating link %s => %s: %s",
++//			     targetfullpath, src, strerror (errno));
++//g_free (targetfullpath);
++//
++//return rv == 0 ? TRUE: FALSE;
++	return FALSE ; 
+ }
+ 
+ 
+@@ -222,13 +220,13 @@ process_file (const char* fullpath, const gchar* mdir,
+ 	if (!msg_cb)
+ 		return MU_OK;
+ 
+-	if (G_UNLIKELY(access(fullpath, R_OK) != 0)) {
++	if (G_UNLIKELY(g_access(fullpath, R_OK) != 0)) {
+ 		g_warning ("cannot access %s: %s", fullpath,
+ 			   strerror(errno));
+ 		return MU_ERROR;
+ 	}
+ 
+-	if (G_UNLIKELY(stat (fullpath, &statbuf) != 0)) {
++	if (G_UNLIKELY(g_stat (fullpath, &statbuf) != 0)) {
+ 		g_warning ("cannot stat %s: %s", fullpath, strerror(errno));
+ 		return MU_ERROR;
+ 	}
+@@ -326,25 +324,25 @@ is_dotdir_to_ignore (const char* dir)
+ }
+ 
+ static gboolean
+-ignore_dir_entry (struct dirent *entry, unsigned char d_type)
++ignore_dir_entry (gchar *entry, unsigned char d_type)
+ {
+ 	if (G_LIKELY(d_type == DT_REG)) {
+ 
+ 		guint u;
+ 
+ 		/* ignore emacs tempfiles */
+-		if (entry->d_name[0] == '#')
++		if (entry[0] == '#')
+ 			return TRUE;
+ 		/* ignore dovecot metadata */
+-		if (entry->d_name[0] == 'd' &&
+-		    strncmp (entry->d_name, "dovecot", 7) == 0)
++		if (entry[0] == 'd' &&
++		    strncmp (entry, "dovecot", 7) == 0)
+ 			return TRUE;
+ 		/* ignore special files */
+-		if (entry->d_name[0] == '.')
++		if (entry[0] == '.')
+ 			return TRUE;
+ 		/* ignore core files */
+-		if (entry->d_name[0] == 'c' &&
+-		    strncmp (entry->d_name, "core", 4) == 0)
++		if (entry[0] == 'c' &&
++		    strncmp (entry, "core", 4) == 0)
+ 			return TRUE;
+ 		/* ignore tmp/backup files; find the last char */
+ 		for (u = 0; entry->d_name[u] != '\0'; ++u) {
+@@ -361,7 +359,7 @@ ignore_dir_entry (struct dirent *entry, unsigned char d_type)
+ 		return FALSE; /* other files: don't ignore */
+ 
+ 	} else if (d_type == DT_DIR)
+-		return is_dotdir_to_ignore (entry->d_name);
++		return is_dotdir_to_ignore (entry);
+ 	else
+ 		return TRUE; /* ignore non-normal files, non-dirs */
+ }
+@@ -389,7 +387,7 @@ get_mdir_for_path (const gchar *old_mdir, const gchar *dir)
+ 
+ 
+ static MuError
+-process_dir_entry (const char* path, const char* mdir, struct dirent *entry,
++process_dir_entry (const char* path, const char* mdir, gchar *entry,
+ 		   MuMaildirWalkMsgCallback cb_msg,
+ 		   MuMaildirWalkDirCallback cb_dir,
+ 		   gboolean full, void *data)
+@@ -400,7 +398,7 @@ process_dir_entry (const char* path, const char* mdir, struct dirent *entry,
+ 
+ 	/* we have to copy the buffer from fullpath_s, because it
+ 	 * returns a static buffer, and we maybe called reentrantly */
+-	fp = mu_str_fullpath_s (path, entry->d_name);
++	fp = mu_str_fullpath_s (path, entry);
+ 	fullpath = g_newa (char, strlen(fp) + 1);
+ 	strcpy (fullpath, fp);
+ 
+@@ -425,7 +423,7 @@ process_dir_entry (const char* path, const char* mdir, struct dirent *entry,
+ 		/* my_mdir is the search maildir (the dir starting
+ 		 * with the top-level maildir as /, and without the
+ 		 * /tmp, /cur, /new  */
+-		my_mdir = get_mdir_for_path (mdir, entry->d_name);
++		my_mdir = get_mdir_for_path (mdir, entry);
+ 		rv = process_dir (fullpath, my_mdir, cb_msg, cb_dir, full, data);
+ 		g_free (my_mdir);
+ 
+@@ -438,40 +436,24 @@ process_dir_entry (const char* path, const char* mdir, struct dirent *entry,
+ }
+ 
+ 
+-static const size_t DIRENT_ALLOC_SIZE =
+-	offsetof (struct dirent, d_name) + PATH_MAX;
++static const size_t DIRENT_ALLOC_SIZE = PATH_MAX + 1 ;
+ 
+-static struct dirent*
++static gchar*
+ dirent_new (void)
+ {
+-	return (struct dirent*) g_slice_alloc (DIRENT_ALLOC_SIZE);
++	return (gchar*) g_slice_alloc (DIRENT_ALLOC_SIZE);
+ }
+ 
+ 
+ static void
+-dirent_destroy (struct dirent *entry)
++dirent_destroy (gchar* entry)
+ {
+ 	g_slice_free1 (DIRENT_ALLOC_SIZE, entry);
+ }
+ 
+-#ifdef HAVE_STRUCT_DIRENT_D_INO
+-static int
+-dirent_cmp (struct dirent *d1, struct dirent *d2)
+-{
+-	/* we do it his way instead of a simple d1->d_ino - d2->d_ino
+-	 * because this way, we don't need 64-bit numbers for the
+-	 * actual sorting */
+-	if (d1->d_ino < d2->d_ino)
+-		return -1;
+-	else if (d1->d_ino > d2->d_ino)
+-		return 1;
+-	else
+-		return 0;
+-}
+-#endif /*HAVE_STRUCT_DIRENT_D_INO*/
+ 
+ static MuError
+-process_dir_entries (DIR *dir, const char* path, const char* mdir,
++process_dir_entries (GDir *dir, const char* path, const char* mdir,
+ 		     MuMaildirWalkMsgCallback msg_cb,
+ 		     MuMaildirWalkDirCallback dir_cb,
+ 		     gboolean full, void *data)
+@@ -481,31 +463,24 @@ process_dir_entries (DIR *dir, const char* path, const char* mdir,
+ 
+ 	for (lst = NULL;;) {
+ 		int rv;
+-		struct dirent *entry, *res;
++		gchar *entry, *res;
+ 		entry = dirent_new ();
+-		rv = readdir_r (dir, entry, &res);
+-		if (rv == 0) {
+-			if (res)
+-				lst = g_slist_prepend (lst, entry);
+-			else {
+-				dirent_destroy (entry);
+-				break; /* last direntry reached */
+-			}
+-		} else {
++		res = g_dir_read_name(dir);
++		if (res){
++			g_strlcpy(entry, res , PATH_MAX) ; 
++			lst = g_slist_prepend (lst, entry);
++		}
++		else {
+ 			dirent_destroy (entry);
+-			g_warning ("error scanning dir: %s", strerror(rv));
+-			return MU_ERROR_FILE;
++			break; /* last direntry reached */
+ 		}
+ 	}
+ 
+ 	/* we sort by inode; this makes things much faster on
+ 	 * extfs2,3 */
+-#if HAVE_STRUCT_DIRENT_D_INO
+-	c = lst = g_slist_sort (lst, (GCompareFunc)dirent_cmp);
+-#endif /*HAVE_STRUCT_DIRENT_D_INO*/
+ 
+ 	for (c = lst, result = MU_OK; c && result == MU_OK; c = g_slist_next(c))
+-		result = process_dir_entry (path, mdir, (struct dirent*)c->data,
++		result = process_dir_entry (path, mdir, (gchar*)c->data,
+ 					    msg_cb, dir_cb, full, data);
+ 
+ 	g_slist_foreach (lst, (GFunc)dirent_destroy, NULL);
+@@ -521,7 +496,7 @@ process_dir (const char* path, const char* mdir,
+ 	     gboolean full, void *data)
+ {
+ 	MuError result;
+-	DIR*	dir;
++	GDir* dir;
+ 
+ 	/* if it has a noindex file, we ignore this dir */
+ 	if (dir_contains_file (path, MU_MAILDIR_NOINDEX_FILE) ||
+@@ -541,7 +516,7 @@ process_dir (const char* path, const char* mdir,
+ 			return rv;
+ 	}
+ 
+-	dir = opendir (path);
++	dir = g_dir_open (path, 0 , NULL);
+ 	if (!dir) {
+ 		g_warning ("cannot access %s: %s", path, strerror(errno));
+ 		return MU_OK;
+@@ -549,7 +524,7 @@ process_dir (const char* path, const char* mdir,
+ 
+ 	result = process_dir_entries (dir, path, mdir, msg_cb, dir_cb,
+ 				      full, data);
+-	closedir (dir);
++	g_dir_close (dir);
+ 
+ 	/* only run dir_cb if it exists and so far, things went ok */
+ 	if (dir_cb && result == MU_OK)
+@@ -583,18 +558,27 @@ mu_maildir_walk (const char *path, MuMaildirWalkMsgCallback cb_msg,
+ 
+ 
+ static gboolean
+-clear_links (const char *path, DIR *dir)
++clear_links (const gchar* dirname, GDir *dir, GError **err)
+ {
+-	gboolean	 rv;
+-	struct dirent	*dentry;
++	const gchar* entry;
++	gboolean rv;
+ 
+ 	rv    = TRUE;
+ 	errno = 0;
++	while ((entry = g_dir_read_name (dir))) {
+ 
+ 	while ((dentry = readdir (dir))) {
+ 
+-		guint8	 d_type;
+-		char	*fullpath;
++		/* ignore empty, dot thingies */
++		if (!entry || entry[0] == '.')
++			continue;
++
++		/* we have to copy the buffer from fullpath_s, because
++		 * it returns a static buffer and we are
++		 * recursive*/
++		fp = mu_str_fullpath_s (dirname, entry);
++		fullpath = g_newa (char, strlen(fp) + 1);
++		strcpy (fullpath, fp);
+ 
+ 		if (dentry->d_name[0] == '.')
+ 			continue; /* ignore .,.. other dotdirs */
+@@ -634,21 +618,19 @@ clear_links (const char *path, DIR *dir)
+ gboolean
+ mu_maildir_clear_links (const char *path, GError **err)
+ {
+-	DIR		*dir;
+-	gboolean	 rv;
++	GDir *dir;
++	gboolean rv;
+ 
+ 	g_return_val_if_fail (path, FALSE);
+ 
+-	dir = opendir (path);
+-	if (!dir) {
+-		g_set_error (err, MU_ERROR_DOMAIN, MU_ERROR_FILE_CANNOT_OPEN,
+-			     "failed to open %s: %s", path, strerror(errno));
+-		return FALSE;
+-	}
+-
+-	rv = clear_links (path, dir);
++	dir = g_dir_open (path, 0 , NULL);
++	if (!dir)
++		return mu_util_g_set_error (err, MU_ERROR_FILE_CANNOT_OPEN,
++				       "failed to open %s: %s", path,
++				       strerror(errno));
+ 
+-	closedir (dir);
++	rv = clear_links (path, dir, err);
++	g_dir_close (dir);
+ 
+ 	return rv;
+ }
+@@ -701,7 +683,7 @@ mu_maildir_get_flags_from_path (const char *path)
+ 
+ 		info = strrchr (path, '2');
+ 		if (!info || info == path ||
+-		    (info[-1] != ':' && info[-1] != '!') ||
++		    (info[-1] != ';' && info[-1] != '!') ||
+ 		    (info[1] != ','))
+ 			return MU_FLAG_NONE;
+ 		else
+@@ -738,7 +720,7 @@ get_new_path (const char *mdir, const char *mfile, MuFlags flags,
+ 		const char *flagstr;
+ 		flagstr = mu_flags_to_str_s (flags, MU_FLAG_TYPE_MAILFILE);
+ 
+-		return g_strdup_printf ("%s%ccur%c%s:2,%s%s",
++		return g_strdup_printf ("%s%ccur%c%s;2,%s%s",
+ 					mdir, G_DIR_SEPARATOR, G_DIR_SEPARATOR,
+ 					mfile, flagstr,
+ 					custom_flags ? custom_flags : "");
+@@ -829,7 +811,7 @@ get_file_size (const char* path)
+ 	int		rv;
+ 	struct stat	statbuf;
+ 
+-	rv = stat (path, &statbuf);
++	rv = g_stat (path, &statbuf);
+ 	if (rv != 0) {
+ 		/* g_warning ("error: %s", strerror (errno)); */
+ 		return -1;
+@@ -843,7 +825,7 @@ static gboolean
+ msg_move_check_pre (const gchar *src, const gchar *dst, GError **err)
+ {
+ 	gint size1, size2;
+-
++	
+ 	if (!g_path_is_absolute(src))
+ 		return mu_util_g_set_error
+ 			(err, MU_ERROR_FILE,
+@@ -854,11 +836,11 @@ msg_move_check_pre (const gchar *src, const gchar *dst, GError **err)
+ 			(err, MU_ERROR_FILE,
+ 			 "target is not an absolute path: '%s'", dst);
+ 
+-	if (access (src, R_OK) != 0)
++	if (g_access (src, R_OK) != 0)
+ 		return mu_util_g_set_error (err, MU_ERROR_FILE,
+ 					    "cannot read %s",  src);
+ 
+-	if (access (dst, F_OK) != 0)
++	if (g_access (dst, F_OK) != 0)
+ 		return TRUE;
+ 
+ 	/* target exist; we simply overwrite it, unless target has a different
+@@ -878,13 +860,15 @@ static gboolean
+ msg_move_check_post (const char *src, const char *dst, GError **err)
+ {
+ 	/* double check -- is the target really there? */
+-	if (access (dst, F_OK) != 0)
++	if (g_access (dst, F_OK) != 0)
+ 		return mu_util_g_set_error
+ 			(err, MU_ERROR_FILE, "can't find target (%s)",  dst);
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
+-	if (access (src, F_OK) == 0)
++	if (g_access (src, F_OK) == 0)
+ 		return mu_util_g_set_error
+ 			(err, MU_ERROR_FILE, "source still there (%s)", src);
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
+ 	return TRUE;
+ }
+@@ -893,12 +877,15 @@ msg_move_check_post (const char *src, const char *dst, GError **err)
+ static gboolean
+ msg_move (const char* src, const char *dst, GError **err)
+ {
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	if (!msg_move_check_pre (src, dst, err))
+ 		return FALSE;
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
+-	if (rename (src, dst) != 0)
++	if (g_rename (src, dst) != 0)
+ 		return mu_util_g_set_error
+ 			(err, MU_ERROR_FILE,"error moving %s to %s", src, dst);
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
+ 	return msg_move_check_post (src, dst, err);
+ }
+@@ -912,8 +899,9 @@ mu_maildir_move_message (const char* oldpath, const char* targetmdir,
+ 	gboolean rv;
+ 	gboolean src_is_target;
+ 
++	printf("%s %s:%d\n", oldpath, __FILE__, __LINE__) ; 
+ 	g_return_val_if_fail (oldpath, FALSE);
+-
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	newfullpath = mu_maildir_get_new_path (oldpath, targetmdir,
+ 					       newflags, new_name);
+ 	if (!newfullpath) {
+@@ -921,8 +909,10 @@ mu_maildir_move_message (const char* oldpath, const char* targetmdir,
+ 				     "failed to determine targetpath");
+ 		return NULL;
+ 	}
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
+ 	src_is_target = (g_strcmp0 (oldpath, newfullpath) == 0);
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
+ 	if (!ignore_dups && src_is_target) {
+ 		mu_util_g_set_error (err, MU_ERROR_FILE_TARGET_EQUALS_SOURCE,
+@@ -930,6 +920,7 @@ mu_maildir_move_message (const char* oldpath, const char* targetmdir,
+ 		return NULL;
+ 	}
+ 
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	if (!src_is_target) {
+ 		rv = msg_move (oldpath, newfullpath, err);
+ 		if (!rv) {
+@@ -937,6 +928,7 @@ mu_maildir_move_message (const char* oldpath, const char* targetmdir,
+ 			return NULL;
+ 		}
+ 	}
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
+ 	return newfullpath;
+ }
+diff --git a/lib/mu-msg-crypto.c b/lib/mu-msg-crypto.c
+index c4482fd..db9f161 100644
+--- a/lib/mu-msg-crypto.c
++++ b/lib/mu-msg-crypto.c
+@@ -132,24 +132,24 @@ get_gpg_crypto_context (MuMsgOptions opts, GError **err)
+ 	char			*gpg;
+ 
+ 	cctx  = NULL;
+-	if (!(gpg   = get_gpg (err)))
+-		return NULL;
+-
+-	cctx = g_mime_gpg_context_new (
+-		(GMimePasswordRequestFunc)password_requester, gpg);
+-	g_free (gpg);
+-
+-	if (!cctx) {
+-		mu_util_g_set_error (err, MU_ERROR,
+-				     "failed to get GPG crypto context");
+-		return NULL;
+-	}
+-
+-	/* always try to use the agent */
+-	g_mime_gpg_context_set_use_agent (GMIME_GPG_CONTEXT(cctx), TRUE);
+- 	g_mime_gpg_context_set_auto_key_retrieve
+-		(GMIME_GPG_CONTEXT(cctx),
+-		 opts & MU_MSG_OPTION_AUTO_RETRIEVE ? TRUE:FALSE);
++//notuse//if (!(gpg   = get_gpg (err)))
++//notuse//	return NULL;
++//notuse//
++//notuse//cctx = g_mime_gpg_context_new (
++//notuse//	(GMimePasswordRequestFunc)password_requester, gpg);
++//notuse//g_free (gpg);
++
++//donotuse//if (!cctx) {
++//donotuse//	mu_util_g_set_error (err, MU_ERROR,
++//donotuse//			     "failed to get GPG crypto context");
++//donotuse//	return NULL;
++//donotuse//}
++//donotuse//
++//donotuse///* always try to use the agent */
++//donotuse//g_mime_gpg_context_set_use_agent (GMIME_GPG_CONTEXT(cctx), TRUE);
++//donotuse//g_mime_gpg_context_set_auto_key_retrieve
++//donotuse//	(GMIME_GPG_CONTEXT(cctx),
++//donotuse//	 opts & MU_MSG_OPTION_AUTO_RETRIEVE ? TRUE:FALSE);
+ 
+ 	return cctx;
+ }
+diff --git a/lib/mu-msg-fields.c b/lib/mu-msg-fields.c
+index f26c030..8cd56cd 100644
+--- a/lib/mu-msg-fields.c
++++ b/lib/mu-msg-fields.c
+@@ -1,446 +1,446 @@
+-/* -*-mode: c; tab-width: 8; indent-tabs-mode: t; c-basic-offset: 8 -*-*/
+-
+-/*
+-** Copyright (C) 2008-2013 Dirk-Jan C. Binnema <djcb@djcbsoftware.nl>
+-**
+-** This program is free software; you can redistribute it and/or modify
+-** it under the terms of the GNU General Public License as published by
+-** the Free Software Foundation; either version 3 of the License, or
+-** (at your option) any later version.
+-**
+-** This program is distributed in the hope that it will be useful,
+-** but WITHOUT ANY WARRANTY; without even the implied warranty of
+-** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+-** GNU General Public License for more details.
+-**
+-** You should have received a copy of the GNU General Public License
+-** along with this program; if not, write to the Free Software Foundation,
+-** Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+-**
+-*/
+-
+-#include <string.h>
+-#include "mu-msg-fields.h"
+-
+-/*
+- * note: the differences for our purposes between a xapian field and a
+- * term: - there is only a single value for some item in per document
+- * (msg), ie.  one value containing the list of To: addresses - there
+- * can be multiple terms, each containing e.g. one of the To:
+- * addresses - searching uses terms, but to display some field, it
+- * must be in the value (at least when using MuMsgIter)
+- */
+-enum _FieldFlags {
+-	FLAG_GMIME	         = 1 << 0, /* field retrieved through
+-					    * gmime */
+-	FLAG_XAPIAN_INDEX        = 1 << 1, /* field is indexed in
+-			          	    * xapian (i.e., the text
+-			          	    * is processed */
+-	FLAG_XAPIAN_TERM         = 1 << 2, /* field stored as term in
+-			          	    * xapian (so it can be searched) */
+-	FLAG_XAPIAN_VALUE        = 1 << 3, /* field stored as value in
+-			          	    * xapian (so the literal
+-			          	    * value can be
+-			          	    * retrieved) */
+-	FLAG_XAPIAN_CONTACT      = 1 << 4, /* field contains one or more
+-					    * e-mail-addresses */
+-	FLAG_XAPIAN_BOOLEAN      = 1 << 5, /* use 'add_boolean_prefix'
+-					    * for Xapian queries;
+-					    * wildcards do NOT WORK
+-					    * for such fields */
+-	FLAG_PREPROCESS	         = 1 << 6, /* field needs flattening for
+-					    * case/accents */
+-	FLAG_DONT_CACHE          = 1 << 7,  /* don't cache this field in
+-					    * the MuMsg cache */
+-	FLAG_RANGE_FIELD         = 1 << 8  /* whether this is a range field */
+-
+-};
+-typedef enum _FieldFlags	FieldFlags;
+-
+-/*
+- * this struct describes the fields of an e-mail
+- /*/
+-struct _MuMsgField {
+-	MuMsgFieldId      _id;	     /* the id of the field */
+-	MuMsgFieldType    _type;     /* the type of the field */
+-	const char       *_name;     /* the name of the field */
+-	const char        _shortcut; /* the shortcut for use in
+-				      * --fields and sorting */
+-	const char        _xprefix;  /* the Xapian-prefix  */
+-	FieldFlags        _flags;    /* the flags that tells us
+-				      * what to do */
+-
+-
+-};
+-typedef struct _MuMsgField MuMsgField;
+-
+-/* the name and shortcut fields must be lower case, or they might be
+- * misinterpreted by the query-preprocesser which turns queries into
+- * lowercase */
+-static const MuMsgField FIELD_DATA[] = {
+-
+-	{
+-		MU_MSG_FIELD_ID_BCC,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"bcc" , 'h', 'H',  /* 'hidden */
+-		FLAG_GMIME | FLAG_XAPIAN_CONTACT |
+-		FLAG_XAPIAN_VALUE | FLAG_PREPROCESS
+-	},
+-
+-	{
+-		MU_MSG_FIELD_ID_BODY_TEXT,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"body", 'b', 'B',
+-		FLAG_GMIME | FLAG_XAPIAN_INDEX | FLAG_PREPROCESS |
+-		FLAG_DONT_CACHE
+-	},
+-
+-	{
+-		MU_MSG_FIELD_ID_BODY_HTML,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"bodyhtml", 0, 0,
+-		FLAG_GMIME | FLAG_DONT_CACHE
+-	},
+-
+-	{
+-		MU_MSG_FIELD_ID_CC,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"cc", 'c', 'C',
+-		FLAG_GMIME | FLAG_XAPIAN_CONTACT | FLAG_XAPIAN_VALUE |
+-		FLAG_PREPROCESS
+-	},
+-
+-	{
+-		MU_MSG_FIELD_ID_DATE,
+-		MU_MSG_FIELD_TYPE_TIME_T,
+-		"date", 'd', 'D',
+-		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE |
+-		FLAG_XAPIAN_BOOLEAN | FLAG_RANGE_FIELD
+-	},
+-
+-	{
+-		MU_MSG_FIELD_ID_EMBEDDED_TEXT,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"embed", 'e', 'E',
+-		FLAG_GMIME | FLAG_XAPIAN_INDEX | FLAG_PREPROCESS |
+-		FLAG_DONT_CACHE
+-	},
+-
+-	{
+-		MU_MSG_FIELD_ID_FILE,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"file" , 'j', 'J',
+-		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_PREPROCESS |
+-		FLAG_DONT_CACHE
+-	},
+-
+-
+-	{
+-		MU_MSG_FIELD_ID_FLAGS,
+-		MU_MSG_FIELD_TYPE_INT,
+-		"flag", 'g', 'G',  /* flaGs */
+-		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE
+-	},
+-
+-	{
+-		MU_MSG_FIELD_ID_FROM,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"from", 'f', 'F',
+-		FLAG_GMIME | FLAG_XAPIAN_CONTACT | FLAG_XAPIAN_VALUE |
+-		FLAG_PREPROCESS
+-	},
+-
+-
+-	{
+-		MU_MSG_FIELD_ID_MAILDIR,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"maildir", 'm', 'M',
+-		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE |
+-		FLAG_PREPROCESS
+-	},
+-
+-
+-	{
+-		MU_MSG_FIELD_ID_MAILING_LIST,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"list", 'v', 'V',
+-		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE |
+-		FLAG_PREPROCESS
+-	},
+-
+-
+-	{
+-		MU_MSG_FIELD_ID_MIME,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"mime" , 'y', 'Y',
+-		FLAG_XAPIAN_TERM | FLAG_PREPROCESS
+-	},
+-
+-
+-	{
+-		MU_MSG_FIELD_ID_MSGID,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"msgid", 'i', 'I',  /* 'i' for Id */
+-		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE |
+-		FLAG_PREPROCESS
+-	},
+-
+-
+-	{
+-		MU_MSG_FIELD_ID_PATH,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"path", 'l', 'L',   /* 'l' for location */
+-		FLAG_GMIME | FLAG_XAPIAN_VALUE |
+-		FLAG_XAPIAN_BOOLEAN | FLAG_PREPROCESS
+-	},
+-
+-
+-	{
+-		MU_MSG_FIELD_ID_PRIO,
+-		MU_MSG_FIELD_TYPE_INT,
+-		"prio", 'p', 'P',
+-		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE
+-	},
+-
+-
+-	{
+-		MU_MSG_FIELD_ID_REFS,
+-		MU_MSG_FIELD_TYPE_STRING_LIST,
+-		"refs", 'r', 'R',
+-		FLAG_GMIME | FLAG_XAPIAN_VALUE
+-	},
+-
+-
+-	{
+-		MU_MSG_FIELD_ID_SIZE,
+-		MU_MSG_FIELD_TYPE_BYTESIZE,
+-		"size", 'z', 'Z', /* siZe */
+-		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE |
+-		FLAG_RANGE_FIELD
+-	},
+-
+-	{
+-		MU_MSG_FIELD_ID_SUBJECT,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"subject", 's', 'S',
+-		FLAG_GMIME | FLAG_XAPIAN_INDEX | FLAG_XAPIAN_VALUE |
+-		FLAG_XAPIAN_TERM | FLAG_PREPROCESS
+-	},
+-
+-	{
+-		MU_MSG_FIELD_ID_TAGS,
+-		MU_MSG_FIELD_TYPE_STRING_LIST,
+-		"tag", 'x', 'X',
+-		FLAG_GMIME | FLAG_XAPIAN_TERM |	FLAG_PREPROCESS |
+-		FLAG_XAPIAN_VALUE
+-	},
+-
+-
+-	{	/* remember which thread this message is in */
+-		MU_MSG_FIELD_ID_THREAD_ID,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"thread", 0, 'W',
+-		FLAG_XAPIAN_TERM
+-	},
+-
+-	{
+-		MU_MSG_FIELD_ID_TO,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"to", 't', 'T',
+-		FLAG_GMIME | FLAG_XAPIAN_CONTACT | FLAG_XAPIAN_VALUE |
+-		FLAG_PREPROCESS
+-	},
+-
+-	{	/* special, internal field, to get a unique key */
+-		MU_MSG_FIELD_ID_UID,
+-		MU_MSG_FIELD_TYPE_STRING,
+-		"uid", 0, 'U',
+-		FLAG_XAPIAN_TERM
+-	}
+-
+-	/* note, mu-store also use the 'Q' internal prefix for its uids */
+-};
+-
+-/* the MsgField data in an array, indexed by the MsgFieldId;
+- * this allows for O(1) access
+- */
+-static MuMsgField* _msg_field_data[MU_MSG_FIELD_ID_NUM];
+-static const MuMsgField* mu_msg_field (MuMsgFieldId id)
+-{
+-	static gboolean _initialized;
+-
+-	_initialized = FALSE;
+-
+-	/* initialize the array, but only once... */
+-	if (G_UNLIKELY(!_initialized)) {
+-		int i;
+-		for (i = 0; i != G_N_ELEMENTS(FIELD_DATA); ++i)
+-			_msg_field_data[FIELD_DATA[i]._id] =
+-				(MuMsgField*)&FIELD_DATA[i];
+-		_initialized = TRUE;
+-	}
+-
+-	return _msg_field_data[id];
+-}
+-
+-
+-void
+-mu_msg_field_foreach (MuMsgFieldForeachFunc func, gconstpointer data)
+-{
+-	int i;
+-	for (i = 0; i != MU_MSG_FIELD_ID_NUM; ++i)
+-		func (i, data);
+-}
+-
+-
+-MuMsgFieldId
+-mu_msg_field_id_from_name (const char* str, gboolean err)
+-{
+-	int i;
+-
+-	g_return_val_if_fail (str, MU_MSG_FIELD_ID_NONE);
+-
+-	for (i = 0; i != G_N_ELEMENTS(FIELD_DATA); ++i)
+-		if (g_strcmp0(str, FIELD_DATA[i]._name) == 0)
+-			return FIELD_DATA[i]._id;
+-	if (err)
+-		g_return_val_if_reached (MU_MSG_FIELD_ID_NONE);
+-
+-	return MU_MSG_FIELD_ID_NONE;
+-}
+-
+-
+-MuMsgFieldId
+-mu_msg_field_id_from_shortcut (char kar, gboolean err)
+-{
+-	int i;
+-	for (i = 0; i != G_N_ELEMENTS(FIELD_DATA); ++i)
+-		if (kar == FIELD_DATA[i]._shortcut)
+-			return FIELD_DATA[i]._id;
+-
+-	if (err)
+-		g_return_val_if_reached (MU_MSG_FIELD_ID_NONE);
+-
+-	return MU_MSG_FIELD_ID_NONE;
+-}
+-
+-
+-gboolean
+-mu_msg_field_gmime (MuMsgFieldId id)
+-{
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
+-	return mu_msg_field(id)->_flags & FLAG_GMIME ? TRUE: FALSE;
+-}
+-
+-
+-gboolean
+-mu_msg_field_xapian_index  (MuMsgFieldId id)
+-{
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
+-	return mu_msg_field(id)->_flags & FLAG_XAPIAN_INDEX ? TRUE: FALSE;
+-}
+-
+-gboolean
+-mu_msg_field_xapian_value (MuMsgFieldId id)
+-{
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
+-	return mu_msg_field(id)->_flags & FLAG_XAPIAN_VALUE ? TRUE: FALSE;
+-}
+-
+-gboolean
+-mu_msg_field_xapian_term (MuMsgFieldId id)
+-{
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
+-	return mu_msg_field(id)->_flags & FLAG_XAPIAN_TERM ? TRUE: FALSE;
+-}
+-
+-
+-gboolean
+-mu_msg_field_is_range_field (MuMsgFieldId id)
+-{
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
+-	return mu_msg_field(id)->_flags & FLAG_RANGE_FIELD ? TRUE: FALSE;
+-}
+-
+-
+-
+-gboolean
+-mu_msg_field_uses_boolean_prefix (MuMsgFieldId id)
+-{
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
+-	return mu_msg_field(id)->_flags & FLAG_XAPIAN_BOOLEAN ? TRUE:FALSE;
+-}
+-
+-
+-
+-gboolean
+-mu_msg_field_is_cacheable (MuMsgFieldId id)
+-{
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
+-	/* note the FALSE: TRUE */
+-	return mu_msg_field(id)->_flags & FLAG_DONT_CACHE ? FALSE : TRUE;
+-}
+-
+-gboolean
+-mu_msg_field_xapian_contact (MuMsgFieldId id)
+-{
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
+-	return mu_msg_field(id)->_flags & FLAG_XAPIAN_CONTACT ? TRUE: FALSE;
+-}
+-
+-
+-gboolean
+-mu_msg_field_preprocess (MuMsgFieldId id)
+-{
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
+-	return mu_msg_field(id)->_flags & FLAG_PREPROCESS ? TRUE: FALSE;
+-}
+-
+-
+-gboolean
+-mu_msg_field_is_numeric (MuMsgFieldId mfid)
+-{
+-	MuMsgFieldType type;
+-
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(mfid),FALSE);
+-
+-	type = mu_msg_field_type (mfid);
+-
+-	return  type == MU_MSG_FIELD_TYPE_BYTESIZE ||
+-		type == MU_MSG_FIELD_TYPE_TIME_T ||
+-		type == MU_MSG_FIELD_TYPE_INT;
+-}
+-
+-const char*
+-mu_msg_field_name (MuMsgFieldId id)
+-{
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(id),NULL);
+-	return mu_msg_field(id)->_name;
+-}
+-
+-
+-char
+-mu_msg_field_shortcut (MuMsgFieldId id)
+-{
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(id),0);
+-	return mu_msg_field(id)->_shortcut;
+-}
+-
+-
+-char
+-mu_msg_field_xapian_prefix (MuMsgFieldId id)
+-{
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(id),0);
+-	return mu_msg_field(id)->_xprefix;
+-}
+-
+-
+-
+-
+-MuMsgFieldType
+-mu_msg_field_type (MuMsgFieldId id)
+-{
+-	g_return_val_if_fail (mu_msg_field_id_is_valid(id),
+-			      MU_MSG_FIELD_TYPE_NONE);
+-	return mu_msg_field(id)->_type;
+-}
++/* -*-mode: c; tab-width: 8; indent-tabs-mode: t; c-basic-offset: 8 -*-*/
++
++/*
++** Copyright (C) 2008-2013 Dirk-Jan C. Binnema <djcb@djcbsoftware.nl>
++**
++** This program is free software; you can redistribute it and/or modify
++** it under the terms of the GNU General Public License as published by
++** the Free Software Foundation; either version 3 of the License, or
++** (at your option) any later version.
++**
++** This program is distributed in the hope that it will be useful,
++** but WITHOUT ANY WARRANTY; without even the implied warranty of
++** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++** GNU General Public License for more details.
++**
++** You should have received a copy of the GNU General Public License
++** along with this program; if not, write to the Free Software Foundation,
++** Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++**
++*/
++
++#include <string.h>
++#include "mu-msg-fields.h"
++
++/*
++ * note: the differences for our purposes between a xapian field and a
++ * term: - there is only a single value for some item in per document
++ * (msg), ie.  one value containing the list of To: addresses - there
++ * can be multiple terms, each containing e.g. one of the To:
++ * addresses - searching uses terms, but to display some field, it
++ * must be in the value (at least when using MuMsgIter)
++ */
++enum _FieldFlags {
++	FLAG_GMIME	         = 1 << 0, /* field retrieved through
++					    * gmime */
++	FLAG_XAPIAN_INDEX        = 1 << 1, /* field is indexed in
++			          	    * xapian (i.e., the text
++			          	    * is processed */
++	FLAG_XAPIAN_TERM         = 1 << 2, /* field stored as term in
++			          	    * xapian (so it can be searched) */
++	FLAG_XAPIAN_VALUE        = 1 << 3, /* field stored as value in
++			          	    * xapian (so the literal
++			          	    * value can be
++			          	    * retrieved) */
++	FLAG_XAPIAN_CONTACT      = 1 << 4, /* field contains one or more
++					    * e-mail-addresses */
++	FLAG_XAPIAN_BOOLEAN      = 1 << 5, /* use 'add_boolean_prefix'
++					    * for Xapian queries;
++					    * wildcards do NOT WORK
++					    * for such fields */
++	FLAG_PREPROCESS	         = 1 << 6, /* field needs flattening for
++					    * case/accents */
++	FLAG_DONT_CACHE          = 1 << 7,  /* don't cache this field in
++					    * the MuMsg cache */
++	FLAG_RANGE_FIELD         = 1 << 8  /* whether this is a range field */
++
++};
++typedef enum _FieldFlags	FieldFlags;
++
++/*
++ * this struct describes the fields of an e-mail
++ /*/
++struct _MuMsgField {
++	MuMsgFieldId      _id;	     /* the id of the field */
++	MuMsgFieldType    _type;     /* the type of the field */
++	const char       *_name;     /* the name of the field */
++	const char        _shortcut; /* the shortcut for use in
++				      * --fields and sorting */
++	const char        _xprefix;  /* the Xapian-prefix  */
++	FieldFlags        _flags;    /* the flags that tells us
++				      * what to do */
++
++
++};
++typedef struct _MuMsgField MuMsgField;
++
++/* the name and shortcut fields must be lower case, or they might be
++ * misinterpreted by the query-preprocesser which turns queries into
++ * lowercase */
++static const MuMsgField FIELD_DATA[] = {
++
++	{
++		MU_MSG_FIELD_ID_BCC,
++		MU_MSG_FIELD_TYPE_STRING,
++		"bcc" , 'h', 'H',  /* 'hidden */
++		FLAG_GMIME | FLAG_XAPIAN_CONTACT |
++		FLAG_XAPIAN_VALUE | FLAG_PREPROCESS
++	},
++
++	{
++		MU_MSG_FIELD_ID_BODY_TEXT,
++		MU_MSG_FIELD_TYPE_STRING,
++		"body", 'b', 'B',
++		FLAG_GMIME | FLAG_XAPIAN_INDEX | FLAG_PREPROCESS |
++		FLAG_DONT_CACHE
++	},
++
++	{
++		MU_MSG_FIELD_ID_BODY_HTML,
++		MU_MSG_FIELD_TYPE_STRING,
++		"bodyhtml", 0, 0,
++		FLAG_GMIME | FLAG_DONT_CACHE
++	},
++
++	{
++		MU_MSG_FIELD_ID_CC,
++		MU_MSG_FIELD_TYPE_STRING,
++		"cc", 'c', 'C',
++		FLAG_GMIME | FLAG_XAPIAN_CONTACT | FLAG_XAPIAN_VALUE |
++		FLAG_PREPROCESS
++	},
++
++	{
++		MU_MSG_FIELD_ID_DATE,
++		MU_MSG_FIELD_TYPE_TIME_T,
++		"date", 'd', 'D',
++		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE |
++		FLAG_XAPIAN_BOOLEAN | FLAG_RANGE_FIELD
++	},
++
++	{
++		MU_MSG_FIELD_ID_EMBEDDED_TEXT,
++		MU_MSG_FIELD_TYPE_STRING,
++		"embed", 'e', 'E',
++		FLAG_GMIME | FLAG_XAPIAN_INDEX | FLAG_PREPROCESS |
++		FLAG_DONT_CACHE
++	},
++
++	{
++		MU_MSG_FIELD_ID_FILE,
++		MU_MSG_FIELD_TYPE_STRING,
++		"file" , 'j', 'J',
++		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_PREPROCESS |
++		FLAG_DONT_CACHE
++	},
++
++
++	{
++		MU_MSG_FIELD_ID_FLAGS,
++		MU_MSG_FIELD_TYPE_INT,
++		"flag", 'g', 'G',  /* flaGs */
++		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE
++	},
++
++	{
++		MU_MSG_FIELD_ID_FROM,
++		MU_MSG_FIELD_TYPE_STRING,
++		"from", 'f', 'F',
++		FLAG_GMIME | FLAG_XAPIAN_CONTACT | FLAG_XAPIAN_VALUE |
++		FLAG_PREPROCESS
++	},
++
++
++	{
++		MU_MSG_FIELD_ID_MAILDIR,
++		MU_MSG_FIELD_TYPE_STRING,
++		"maildir", 'm', 'M',
++		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE |
++		FLAG_PREPROCESS
++	},
++
++
++	{
++		MU_MSG_FIELD_ID_MAILING_LIST,
++		MU_MSG_FIELD_TYPE_STRING,
++		"list", 'v', 'V',
++		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE |
++		FLAG_PREPROCESS
++	},
++
++
++	{
++		MU_MSG_FIELD_ID_MIME,
++		MU_MSG_FIELD_TYPE_STRING,
++		"mime" , 'y', 'Y',
++		FLAG_XAPIAN_TERM | FLAG_PREPROCESS
++	},
++
++
++	{
++		MU_MSG_FIELD_ID_MSGID,
++		MU_MSG_FIELD_TYPE_STRING,
++		"msgid", 'i', 'I',  /* 'i' for Id */
++		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE |
++		FLAG_PREPROCESS
++	},
++
++
++	{
++		MU_MSG_FIELD_ID_PATH,
++		MU_MSG_FIELD_TYPE_STRING,
++		"path", 'l', 'L',   /* 'l' for location */
++		FLAG_GMIME | FLAG_XAPIAN_VALUE |
++		FLAG_XAPIAN_BOOLEAN | FLAG_PREPROCESS
++	},
++
++
++	{
++		MU_MSG_FIELD_ID_PRIO,
++		MU_MSG_FIELD_TYPE_INT,
++		"prio", 'p', 'P',
++		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE
++	},
++
++
++	{
++		MU_MSG_FIELD_ID_REFS,
++		MU_MSG_FIELD_TYPE_STRING_LIST,
++		"refs", 'r', 'R',
++		FLAG_GMIME | FLAG_XAPIAN_VALUE
++	},
++
++
++	{
++		MU_MSG_FIELD_ID_SIZE,
++		MU_MSG_FIELD_TYPE_BYTESIZE,
++		"size", 'z', 'Z', /* siZe */
++		FLAG_GMIME | FLAG_XAPIAN_TERM | FLAG_XAPIAN_VALUE |
++		FLAG_RANGE_FIELD
++	},
++
++	{
++		MU_MSG_FIELD_ID_SUBJECT,
++		MU_MSG_FIELD_TYPE_STRING,
++		"subject", 's', 'S',
++		FLAG_GMIME | FLAG_XAPIAN_INDEX | FLAG_XAPIAN_VALUE |
++		FLAG_XAPIAN_TERM | FLAG_PREPROCESS
++	},
++
++	{
++		MU_MSG_FIELD_ID_TAGS,
++		MU_MSG_FIELD_TYPE_STRING_LIST,
++		"tag", 'x', 'X',
++		FLAG_GMIME | FLAG_XAPIAN_TERM |	FLAG_PREPROCESS |
++		FLAG_XAPIAN_VALUE
++	},
++
++
++	{	/* remember which thread this message is in */
++		MU_MSG_FIELD_ID_THREAD_ID,
++		MU_MSG_FIELD_TYPE_STRING,
++		"thread", 0, 'W',
++		FLAG_XAPIAN_TERM
++	},
++
++	{
++		MU_MSG_FIELD_ID_TO,
++		MU_MSG_FIELD_TYPE_STRING,
++		"to", 't', 'T',
++		FLAG_GMIME | FLAG_XAPIAN_CONTACT | FLAG_XAPIAN_VALUE |
++		FLAG_PREPROCESS
++	},
++
++	{	/* special, internal field, to get a unique key */
++		MU_MSG_FIELD_ID_UID,
++		MU_MSG_FIELD_TYPE_STRING,
++		"uid", 0, 'U',
++		FLAG_XAPIAN_TERM
++	}
++
++	/* note, mu-store also use the 'Q' internal prefix for its uids */
++};
++
++/* the MsgField data in an array, indexed by the MsgFieldId;
++ * this allows for O(1) access
++ */
++static MuMsgField* _msg_field_data[MU_MSG_FIELD_ID_NUM];
++static const MuMsgField* mu_msg_field (MuMsgFieldId id)
++{
++	static gboolean _initialized;
++
++	_initialized = FALSE;
++
++	/* initialize the array, but only once... */
++	if (G_UNLIKELY(!_initialized)) {
++		int i;
++		for (i = 0; i != G_N_ELEMENTS(FIELD_DATA); ++i)
++			_msg_field_data[FIELD_DATA[i]._id] =
++				(MuMsgField*)&FIELD_DATA[i];
++		_initialized = TRUE;
++	}
++
++	return _msg_field_data[id];
++}
++
++
++void
++mu_msg_field_foreach (MuMsgFieldForeachFunc func, gconstpointer data)
++{
++	int i;
++	for (i = 0; i != MU_MSG_FIELD_ID_NUM; ++i)
++		func (i, data);
++}
++
++
++MuMsgFieldId
++mu_msg_field_id_from_name (const char* str, gboolean err)
++{
++	int i;
++
++	g_return_val_if_fail (str, MU_MSG_FIELD_ID_NONE);
++
++	for (i = 0; i != G_N_ELEMENTS(FIELD_DATA); ++i)
++		if (g_strcmp0(str, FIELD_DATA[i]._name) == 0)
++			return FIELD_DATA[i]._id;
++	if (err)
++		g_return_val_if_reached (MU_MSG_FIELD_ID_NONE);
++
++	return MU_MSG_FIELD_ID_NONE;
++}
++
++
++MuMsgFieldId
++mu_msg_field_id_from_shortcut (char kar, gboolean err)
++{
++	int i;
++	for (i = 0; i != G_N_ELEMENTS(FIELD_DATA); ++i)
++		if (kar == FIELD_DATA[i]._shortcut)
++			return FIELD_DATA[i]._id;
++
++	if (err)
++		g_return_val_if_reached (MU_MSG_FIELD_ID_NONE);
++
++	return MU_MSG_FIELD_ID_NONE;
++}
++
++
++gboolean
++mu_msg_field_gmime (MuMsgFieldId id)
++{
++	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
++	return mu_msg_field(id)->_flags & FLAG_GMIME ? TRUE: FALSE;
++}
++
++
++gboolean
++mu_msg_field_xapian_index  (MuMsgFieldId id)
++{
++	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
++	return mu_msg_field(id)->_flags & FLAG_XAPIAN_INDEX ? TRUE: FALSE;
++}
++
++gboolean
++mu_msg_field_xapian_value (MuMsgFieldId id)
++{
++	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
++	return mu_msg_field(id)->_flags & FLAG_XAPIAN_VALUE ? TRUE: FALSE;
++}
++
++gboolean
++mu_msg_field_xapian_term (MuMsgFieldId id)
++{
++	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
++	return mu_msg_field(id)->_flags & FLAG_XAPIAN_TERM ? TRUE: FALSE;
++}
++
++
++gboolean
++mu_msg_field_is_range_field (MuMsgFieldId id)
++{
++	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
++	return mu_msg_field(id)->_flags & FLAG_RANGE_FIELD ? TRUE: FALSE;
++}
++
++
++
++gboolean
++mu_msg_field_uses_boolean_prefix (MuMsgFieldId id)
++{
++	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
++	return mu_msg_field(id)->_flags & FLAG_XAPIAN_BOOLEAN ? TRUE:FALSE;
++}
++
++
++
++gboolean
++mu_msg_field_is_cacheable (MuMsgFieldId id)
++{
++	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
++	/* note the FALSE: TRUE */
++	return mu_msg_field(id)->_flags & FLAG_DONT_CACHE ? FALSE : TRUE;
++}
++
++gboolean
++mu_msg_field_xapian_contact (MuMsgFieldId id)
++{
++	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
++	return mu_msg_field(id)->_flags & FLAG_XAPIAN_CONTACT ? TRUE: FALSE;
++}
++
++
++gboolean
++mu_msg_field_preprocess (MuMsgFieldId id)
++{
++	g_return_val_if_fail (mu_msg_field_id_is_valid(id),FALSE);
++	return mu_msg_field(id)->_flags & FLAG_PREPROCESS ? TRUE: FALSE;
++}
++
++
++gboolean
++mu_msg_field_is_numeric (MuMsgFieldId mfid)
++{
++	MuMsgFieldType type;
++
++	g_return_val_if_fail (mu_msg_field_id_is_valid(mfid),FALSE);
++
++	type = mu_msg_field_type (mfid);
++
++	return  type == MU_MSG_FIELD_TYPE_BYTESIZE ||
++		type == MU_MSG_FIELD_TYPE_TIME_T ||
++		type == MU_MSG_FIELD_TYPE_INT;
++}
++
++const char*
++mu_msg_field_name (MuMsgFieldId id)
++{
++	g_return_val_if_fail (mu_msg_field_id_is_valid(id),NULL);
++	return mu_msg_field(id)->_name;
++}
++
++
++char
++mu_msg_field_shortcut (MuMsgFieldId id)
++{
++	g_return_val_if_fail (mu_msg_field_id_is_valid(id),0);
++	return mu_msg_field(id)->_shortcut;
++}
++
++
++char
++mu_msg_field_xapian_prefix (MuMsgFieldId id)
++{
++	g_return_val_if_fail (mu_msg_field_id_is_valid(id),0);
++	return mu_msg_field(id)->_xprefix;
++}
++
++
++
++
++MuMsgFieldType
++mu_msg_field_type (MuMsgFieldId id)
++{
++	g_return_val_if_fail (mu_msg_field_id_is_valid(id),
++			      MU_MSG_FIELD_TYPE_NONE);
++	return mu_msg_field(id)->_type;
++}
+diff --git a/lib/mu-msg-file.c b/lib/mu-msg-file.c
+index e727ab1..8088d47 100644
+--- a/lib/mu-msg-file.c
++++ b/lib/mu-msg-file.c
+@@ -78,14 +78,14 @@ init_file_metadata (MuMsgFile *self, const char* path, const gchar* mdir,
+ {
+ 	struct stat statbuf;
+ 
+-	if (access (path, R_OK) != 0) {
++	if (g_access (path, R_OK) != 0) {
+ 		mu_util_g_set_error (err, MU_ERROR_FILE,
+ 				     "cannot read file %s: %s",
+ 				     path, strerror(errno));
+ 		return FALSE;
+ 	}
+ 
+-	if (stat (path, &statbuf) < 0) {
++	if (g_stat (path, &statbuf) < 0) {
+ 		mu_util_g_set_error (err, MU_ERROR_FILE,
+ 				     "cannot stat %s: %s",
+ 				     path, strerror(errno));
+@@ -102,12 +102,13 @@ init_file_metadata (MuMsgFile *self, const char* path, const gchar* mdir,
+ 	self->_size	 = (size_t)statbuf.st_size;
+ 
+ 	/* remove double slashes, relative paths etc. from path & mdir */
+-	if (!realpath (path, self->_path)) {
+-		mu_util_g_set_error (err, MU_ERROR_FILE,
+-				     "could not get realpath for %s: %s",
+-				     path, strerror(errno));
+-		return FALSE;
+-	}
++//deprecated//if (!_fullpath (self->_path, path, PATH_MAX)) {
++//deprecated//	mu_util_g_set_error (err, MU_ERROR_FILE,
++//deprecated//			     "could not get realpath for %s: %s",
++//deprecated//			     path, strerror(errno));
++//deprecated//	return FALSE;
++//deprecated//}
++	g_strlcpy( self->_path , path , PATH_MAX) ; 
+ 
+ 	strncpy (self->_maildir, mdir ? mdir : "", PATH_MAX);
+ 	return TRUE;
+@@ -121,7 +122,14 @@ get_mime_stream (MuMsgFile *self, const char *path, GError **err)
+ 	FILE *file;
+ 	GMimeStream *stream;
+ 
+-	file = fopen (path, "r");
++
++	// file = g_fopen(path, "rb") ; //segment fault
++	gchar* cp949 = g_convert_with_fallback ( path, -1, "CP949",
++					"UTF-8", NULL,
++					NULL, NULL, NULL);
++	
++	file = fopen(cp949, "rb"); //g_fopen ì€ ì •ìƒ ë™ìž‘í•˜ì§€ ì•„ë‹ˆí•œë‹¤. 
++	g_free(cp949) ; 
+ 	if (!file) {
+ 		g_set_error (err, MU_ERROR_DOMAIN, MU_ERROR_FILE,
+ 			     "cannot open %s: %s",
+diff --git a/lib/mu-msg-part.c b/lib/mu-msg-part.c
+index a686df5..24fa3b8 100644
+--- a/lib/mu-msg-part.c
++++ b/lib/mu-msg-part.c
+@@ -251,7 +251,7 @@ cleanup_filename (char *fname)
+ 	/* replace control characters, slashes, and colons by '-' */
+ 	for (cur = fname; cur && *cur; cur = g_utf8_next_char (cur)) {
+ 		uc = g_utf8_get_char (cur);
+-		if (g_unichar_iscntrl (uc) || uc == '/' || uc == ':')
++		if (g_unichar_iscntrl (uc) || uc == '/' || uc == ' ' || uc == ':' || uc==',')
+ 			g_string_append_unichar (gstr, '-');
+ 		else
+ 			g_string_append_unichar (gstr, uc);
+@@ -315,7 +315,7 @@ mime_part_get_filename (GMimeObject *mobj, unsigned index,
+ 
+ 	if (!fname)
+ 		fname = guess_file_name (mobj, index);
+-
++	
+ 	/* replace control characters, slashes, and colons */
+ 	fname = cleanup_filename (fname);
+ 
+@@ -726,7 +726,7 @@ save_object (GMimeObject *obj, MuMsgOptions opts, const char *fullpath,
+ 
+ 	/* don't try to overwrite when we already have it; useful when
+ 	 * you're sure it's not a different file with the same name */
+-	if (use_existing && access (fullpath, F_OK) == 0)
++	if (use_existing && g_access (fullpath, F_OK) == 0)
+ 		return TRUE;
+ 
+ 	/* ok, try to create the file */
+diff --git a/lib/mu-msg-sexp.c b/lib/mu-msg-sexp.c
+index a3740cd..10c230f 100644
+--- a/lib/mu-msg-sexp.c
++++ b/lib/mu-msg-sexp.c
+@@ -57,12 +57,11 @@ append_sexp_attr (GString *gstr, const char* elm, const char *str)
+ 	if (!str || strlen(str) == 0)
+ 		return; /* empty: don't include */
+ 
+-
+ 	utf8 = mu_str_utf8ify (str);
+ 
+-	for (cur = utf8; *cur; ++cur)
+-		if (iscntrl(*cur))
+-			*cur = ' ';
++//deprecated//    for (cur = utf8; *cur; ++cur)
++//deprecated//    	if (iscntrl(*cur))
++//deprecated//    		*cur = ' ';
+ 
+ 	esc = mu_str_escape_c_literal (utf8, TRUE);
+ 	g_free (utf8);
+@@ -439,7 +438,7 @@ append_message_file_parts (GString *gstr, MuMsg *msg, MuMsgOptions opts)
+ 
+ 	append_sexp_parts (gstr, msg, opts);
+ 	append_sexp_contacts (gstr, msg);
+-
++	
+ 	/* add the user-agent / x-mailer */
+ 	str = mu_msg_get_header (msg, "User-Agent");
+ 	if (str || (str = mu_msg_get_header (msg, "X-Mailer")))
+diff --git a/lib/mu-msg.c b/lib/mu-msg.c
+index c1b1132..092ee01 100644
+--- a/lib/mu-msg.c
++++ b/lib/mu-msg.c
+@@ -342,7 +342,7 @@ mu_msg_get_timestamp (MuMsg *self)
+ 		return self->_file->_timestamp;
+ 
+ 	path = mu_msg_get_path (self);
+-	if (!path || stat (path, &statbuf) < 0)
++	if (!path || g_stat (path, &statbuf) < 0)
+ 		return 0;
+ 
+ 	return statbuf.st_mtime;
+@@ -378,9 +378,9 @@ mu_msg_get_mailing_list (MuMsg *self)
+ {
+ 	const char	*ml;
+ 	char		*decml;
+-
++	
+ 	g_return_val_if_fail (self, NULL);
+-
++	
+ 	ml = get_str_field (self, MU_MSG_FIELD_ID_MAILING_LIST);
+ 	if (!ml)
+ 		return NULL;
+@@ -797,7 +797,7 @@ mu_msg_is_readable (MuMsg *self)
+ {
+ 	g_return_val_if_fail (self, FALSE);
+ 
+-	return access (mu_msg_get_path (self), R_OK) == 0 ? TRUE : FALSE;
++	return g_access (mu_msg_get_path (self), R_OK) == 0 ? TRUE : FALSE;
+ }
+ 
+ 
+@@ -877,25 +877,31 @@ mu_msg_move_to_maildir (MuMsg *self, const char *maildir,
+ 
+ 	/* targetmdir is the full path to maildir, i.e.,
+ 	 * /home/foo/Maildir/inbox */
++	printf("%s %s:%d\n", maildir, __FILE__, __LINE__) ; 
+ 	targetmdir = get_target_mdir (self, maildir, err);
+ 	if (!targetmdir)
+ 		return FALSE;
+ 
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	newfullpath = mu_maildir_move_message (mu_msg_get_path (self),
+ 					       targetmdir, flags,
+ 					       ignore_dups, new_name,
+ 					       err);
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	if (!newfullpath) {
+ 		g_free (targetmdir);
+ 		return FALSE;
+ 	}
+ 
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	/* clear the old backends */
+ 	mu_msg_doc_destroy  (self->_doc);
+ 	self->_doc = NULL;
+ 
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	mu_msg_file_destroy (self->_file);
+ 
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	/* and create a new one */
+ 	self->_file = mu_msg_file_new (newfullpath, maildir, err);
+ 	g_free (targetmdir);
+diff --git a/lib/mu-store-read.cc b/lib/mu-store-read.cc
+index 191c4a2..0d6f561 100644
+--- a/lib/mu-store-read.cc
++++ b/lib/mu-store-read.cc
+@@ -44,6 +44,34 @@
+ 
+ 
+ // note: not re-entrant
++// const char*
++// _MuStore::get_uid_term (const char* path) const
++// {
++// 	char real_path[PATH_MAX + 1];
++// 	static char uid_term[64] = { '\0' };
++// 	if (G_UNLIKELY(uid_term[0] == '\0'))
++// 		uid_term[0] = mu_msg_field_xapian_prefix(MU_MSG_FIELD_ID_UID);
++
++// 	// note: realpath fails when there's no file at path
++
++// 	// char real_path[PATH_MAX + 1];
++
++// 	gchar* cp949 = g_convert_with_fallback ( path, -1, "CP949",
++// 					"UTF-8", NULL,
++// 					NULL, NULL, NULL);
++	
++// 	// if (!_fullpath( real_path, path, PATH_MAX))
++// 	// 	strcpy (real_path, path);
++
++
++// 	strncpy (uid_term + 1, mu_util_get_hash (cp949), sizeof(uid_term) - 1);
++// 	// g_free(cp949) ; 
++// 	return uid_term;
++// }
++
++
++
++
+ const char*
+ _MuStore::get_uid_term (const char* path) const
+ {
+@@ -52,7 +80,8 @@ _MuStore::get_uid_term (const char* path) const
+ 		uid_term[0] = mu_msg_field_xapian_prefix(MU_MSG_FIELD_ID_UID);
+ 
+ 	strncpy (uid_term + 1, mu_util_get_hash (path), sizeof(uid_term) - 1);
+-
++	// printf("%s\n" , uid_term) ; 
++	      
+ 	return uid_term;
+ }
+ 
+diff --git a/lib/mu-store.cc b/lib/mu-store.cc
+index ff23e78..68040ff 100644
+--- a/lib/mu-store.cc
++++ b/lib/mu-store.cc
+@@ -22,6 +22,8 @@
+ #include "config.h"
+ #endif /*HAVE_CONFIG_H*/
+ 
++#include <glib.h>
++#include <glib/gstdio.h>
+ #include <cstdio>
+ #include <xapian.h>
+ #include <cstring>
+@@ -74,7 +76,7 @@ xapian_get_metadata (const gchar *xpath, const gchar *key)
+ 	g_return_val_if_fail (xpath, NULL);
+ 	g_return_val_if_fail (key, NULL);
+ 
+-	if (access(xpath, F_OK) != 0) {
++	if (g_access(xpath, F_OK) != 0) {
+ 		g_warning ("cannot access %s: %s", xpath, strerror(errno));
+ 		return NULL;
+ 	}
+diff --git a/lib/mu-str.c b/lib/mu-str.c
+index a66f43f..d498b1e 100644
+--- a/lib/mu-str.c
++++ b/lib/mu-str.c
+@@ -1047,31 +1047,31 @@ errexit:
+ char *
+ mu_str_remove_ctrl_in_place (char *str)
+ {
+-	char *cur;
+-
+-	g_return_val_if_fail (str, NULL);
+-
+-	for (cur = str; *cur; ++cur) {
+-
+-		GString *gstr;
+-
+-		if (!iscntrl(*cur))
+-			continue;
+-
+-		if (isspace(*cur)) {
+-			/* squash special white space into a simple space */
+-			*cur = ' ';
+-		} else {
+-			/* remove other control characters */
+-			gstr = g_string_sized_new (strlen (str));
+-			for (cur = str; *cur; ++cur)
+-				if (!iscntrl (*cur))
+-					g_string_append_c (gstr, *cur);
+-			memcpy (str, gstr->str, gstr->len); /* fits */
+-			g_string_free (gstr, TRUE);
+-			break;
+-		}
+-	}
++//deprecated//    char *cur;
++//deprecated//    
++//deprecated//    g_return_val_if_fail (str, NULL);
++//deprecated//    
++//deprecated//    for (cur = str; *cur; ++cur) {
++//deprecated//    
++//deprecated//    	GString *gstr;
++//deprecated//    
++//deprecated//    	if (!iscntrl(*cur))
++//deprecated//    		continue;
++//deprecated//    
++//deprecated//    	if (isspace(*cur)) {
++//deprecated//    		/* squash special white space into a simple space */
++//deprecated//    		*cur = ' ';
++//deprecated//    	} else {
++//deprecated//    		/* remove other control characters */
++//deprecated//    		gstr = g_string_sized_new (strlen (str));
++//deprecated//    		for (cur = str; *cur; ++cur)
++//deprecated//    			if (!iscntrl (*cur))
++//deprecated//    				g_string_append_c (gstr, *cur);
++//deprecated//    		memcpy (str, gstr->str, gstr->len); /* fits */
++//deprecated//    		g_string_free (gstr, TRUE);
++//deprecated//    		break;
++//deprecated//    	}
++//deprecated//    }
+ 
+ 	return str;
+ }
+diff --git a/lib/mu-util.c b/lib/mu-util.c
+index 13f45f2..bdc4404 100644
+--- a/lib/mu-util.c
++++ b/lib/mu-util.c
+@@ -28,8 +28,30 @@
+ 
+ #ifdef HAVE_WORDEXP_H
+ #include <wordexp.h> /* for shell-style globbing */
++#else
++#define  _WIN32
++
++void* xrealloc(void* ptr, size_t size) 
++{
++  ptr = realloc(ptr, size);
++  if ( !ptr ) {
++    exit(-1);
++  }
++  return ptr;
++}
++
++#include "glob.c"
++#include "wordexp.c"
++#include "strbuf.c"
++
++
++//wordexp
++
++
+ #endif /*HAVE_WORDEXP_H*/
+ 
++
++
+ #include <stdlib.h>
+ 
+ #include <string.h>
+@@ -44,7 +66,7 @@
+ #include <glib/gstdio.h>
+ #include <errno.h>
+ 
+-#include <langinfo.h>
++// #include <langinfo.h>
+ 
+ 
+ static char*
+@@ -105,8 +127,9 @@ mu_util_dir_expand (const char *path)
+ 	if (access (dir, F_OK) != 0)
+ 		return dir;
+ 
++
+ 	/* now resolve any symlinks, .. etc. */
+-	if (realpath (dir, resolved) == NULL) {
++	if (_fullpath( resolved, dir, PATH_MAX) == NULL) {
+ 		/* g_debug ("%s: could not get realpath for '%s': %s", */
+ 		/* 	 __func__, dir, strerror(errno)); */
+ 		g_free (dir);
+@@ -122,13 +145,13 @@ char*
+ mu_util_create_tmpdir (void)
+ {
+ 	gchar *dirname;
+-
+-	dirname =  g_strdup_printf ("%s%cmu-%d%c%x",
++	srand(time(NULL)) ; 
++        dirname =  g_strdup_printf ("%s%cmu-%d%c%x",
+ 				    g_get_tmp_dir(),
+ 				    G_DIR_SEPARATOR,
+-				    getuid(),
++				    500,
+ 				    G_DIR_SEPARATOR,
+-				    (int)random()*getpid()*(int)time(NULL));
++				    (int)rand()*500*(int)time(NULL));
+ 
+ 	if (!mu_util_create_dir_maybe (dirname, 0700, FALSE)) {
+ 		g_free (dirname);
+@@ -159,7 +182,7 @@ mu_util_cache_dir (void)
+ 
+ 	snprintf (cachedir, sizeof(cachedir), "%s%cmu-%u",
+ 		  g_get_tmp_dir(), G_DIR_SEPARATOR,
+-		  getuid());
++		  500);
+ 
+ 	return cachedir;
+ }
+@@ -176,12 +199,12 @@ mu_util_check_dir (const gchar* path, gboolean readable, gboolean writeable)
+ 
+ 	mode = F_OK | (readable ? R_OK : 0) | (writeable ? W_OK : 0);
+ 
+-	if (access (path, mode) != 0) {
++	if (g_access (path, mode) != 0) {
+ 		/* g_debug ("Cannot access %s: %s", path, strerror (errno)); */
+ 		return FALSE;
+ 	}
+ 
+-	if (stat (path, &statbuf) != 0) {
++	if (g_stat(path, &statbuf) != 0) {
+ 		/* g_debug ("Cannot stat %s: %s", path, strerror (errno)); */
+ 		return FALSE;
+ 	}
+@@ -296,10 +319,11 @@ mu_util_create_writeable_fd (const char* path, mode_t mode,
+ 	errno = 0; /* clear! */
+ 	g_return_val_if_fail (path, -1);
+ 
++	
+ 	if (overwrite)
+-		return open (path, O_WRONLY|O_CREAT|O_TRUNC, mode);
++		return g_open (path, O_WRONLY|O_CREAT|O_TRUNC, mode);
+ 	else
+-		return open (path, O_WRONLY|O_CREAT|O_EXCL, mode);
++		return g_open (path, O_WRONLY|O_CREAT|O_EXCL, mode);
+ }
+ 
+ 
+@@ -362,18 +386,19 @@ mu_util_play (const char *path, gboolean allow_local, gboolean allow_remote,
+ 	const char *prog;
+ 
+ 	g_return_val_if_fail (path, FALSE);
+-	g_return_val_if_fail (mu_util_is_local_file (path) || allow_remote,
+-			      FALSE);
+-	g_return_val_if_fail (!mu_util_is_local_file (path) || allow_local,
+-			      FALSE);
++	// g_return_val_if_fail (mu_util_is_local_file (path) || allow_remote,
++	// 		      FALSE);
++	// g_return_val_if_fail (!mu_util_is_local_file (path) || allow_local,
++	// 		      FALSE);
+ 
+ 	prog = g_getenv ("MU_PLAY_PROGRAM");
+ 	if (!prog) {
+-#ifdef __APPLE__
+-		prog = "open";
+-#else
+-		prog = "xdg-open";
+-#endif /*!__APPLE__*/
++// #ifdef __APPLE__
++// 		prog = "open";
++// #else
++// 		prog = "xdg-open";
++// #endif /*!__APPLE__*/
++		prog = "c:\\windows\\explorer.exe" ;
+ 	}
+ 
+ 	if (!mu_util_program_in_path (prog)) {
+@@ -382,14 +407,19 @@ mu_util_play (const char *path, gboolean allow_local, gboolean allow_remote,
+ 		return FALSE;
+ 	}
+ 
+-	argv[0] = prog;
+-	argv[1] = path;
++	
++
++	
++	argv[0] = prog ; 
++	argv[1] = path ; 
+ 	argv[2] = NULL;
+ 
+ 	err = NULL;
+ 	rv = g_spawn_async (NULL, (gchar**)&argv, NULL,
+ 			    G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
+ 			    err);
++
++	
+ 	return rv;
+ }
+ 
+@@ -401,7 +431,7 @@ mu_util_get_dtype_with_lstat (const char *path)
+ 
+ 	g_return_val_if_fail (path, DT_UNKNOWN);
+ 
+-	if (lstat (path, &statbuf) != 0) {
++	if (g_stat (path, &statbuf) != 0) {
+ 		g_warning ("stat failed on %s: %s", path, strerror(errno));
+ 		return DT_UNKNOWN;
+ 	}
+@@ -411,8 +441,8 @@ mu_util_get_dtype_with_lstat (const char *path)
+ 		return DT_REG;
+ 	else if (S_ISDIR (statbuf.st_mode))
+ 		return DT_DIR;
+-	else if (S_ISLNK (statbuf.st_mode))
+-		return DT_LNK;
++	//else if (S_ISLNK (statbuf.st_mode))
++	//	return DT_LNK;
+ 
+ 	return DT_UNKNOWN;
+ }
+@@ -529,6 +559,24 @@ mu_util_printerr_encoded (const char *frm, ...)
+ }
+ 
+ 
++
++char *getpass(const char *prompt)
++{
++	struct strbuf buf = STRBUF_INIT;
++
++	fputs(prompt, stderr);
++	for (;;) {
++		char c = _getch();
++		if (c == '\r' || c == '\n')
++			break;
++		strbuf_addch(&buf, c);
++	}
++	fputs("\n", stderr);
++	return strbuf_detach(&buf, NULL);
++}
++
++
++
+ char*
+ mu_util_read_password (const char *prompt)
+ {
+diff --git a/lib/strbuf.c b/lib/strbuf.c
+new file mode 100644
+index 0000000..e2124c6
+--- /dev/null
++++ b/lib/strbuf.c
+@@ -0,0 +1,418 @@
++
++#include "strbuf.h"
++
++#define die(x) 
++
++#define alloc_nr(x) (((x)+16)*3/2)
++
++
++
++#define ALLOC_GROW(x, nr, alloc) \
++	do { \
++		if ((nr) > alloc) { \
++			if (alloc_nr(alloc) < (nr)) \
++				alloc = (nr); \
++			else \
++				alloc = alloc_nr(alloc); \
++			x = xrealloc((x), alloc * sizeof(*(x))); \
++		} \
++	} while(0)
++
++int prefixcmp(const char *str, const char *prefix)
++{
++	for (; ; str++, prefix++)
++		if (!*prefix)
++			return 0;
++		else if (*str != *prefix)
++			return (unsigned char)*prefix - (unsigned char)*str;
++}
++
++/*
++ * Used as the default ->buf value, so that people can always assume
++ * buf is non NULL and ->buf is NUL terminated even for a freshly
++ * initialized strbuf.
++ */
++char strbuf_slopbuf[1];
++
++void strbuf_init(struct strbuf *sb, size_t hint)
++{
++	sb->alloc = sb->len = 0;
++	sb->buf = strbuf_slopbuf;
++	if (hint)
++		strbuf_grow(sb, hint);
++}
++
++void strbuf_release(struct strbuf *sb)
++{
++	if (sb->alloc) {
++		free(sb->buf);
++		strbuf_init(sb, 0);
++	}
++}
++
++char *strbuf_detach(struct strbuf *sb, size_t *sz)
++{
++	char *res = sb->alloc ? sb->buf : NULL;
++	if (sz)
++		*sz = sb->len;
++	strbuf_init(sb, 0);
++	return res;
++}
++
++void strbuf_attach(struct strbuf *sb, void *buf, size_t len, size_t alloc)
++{
++	strbuf_release(sb);
++	sb->buf   = buf;
++	sb->len   = len;
++	sb->alloc = alloc;
++	strbuf_grow(sb, 0);
++	sb->buf[sb->len] = '\0';
++}
++
++void strbuf_grow(struct strbuf *sb, size_t extra)
++{
++	if (sb->len + extra + 1 <= sb->len)
++		die("you want to use way too much memory");
++	if (!sb->alloc)
++		sb->buf = NULL;
++	ALLOC_GROW(sb->buf, sb->len + extra + 1, sb->alloc);
++}
++
++void strbuf_rtrim(struct strbuf *sb)
++{
++	while (sb->len > 0 && isspace((unsigned char)sb->buf[sb->len - 1]))
++		sb->len--;
++	sb->buf[sb->len] = '\0';
++}
++
++int strbuf_cmp(struct strbuf *a, struct strbuf *b)
++{
++	int cmp;
++	if (a->len < b->len) {
++		cmp = memcmp(a->buf, b->buf, a->len);
++		return cmp ? cmp : -1;
++	} else {
++		cmp = memcmp(a->buf, b->buf, b->len);
++		return cmp ? cmp : a->len != b->len;
++	}
++}
++
++void strbuf_splice(struct strbuf *sb, size_t pos, size_t len,
++				   const void *data, size_t dlen)
++{
++	if (pos + len < pos)
++		die("you want to use way too much memory");
++	if (pos > sb->len)
++		die("`pos' is too far after the end of the buffer");
++	if (pos + len > sb->len)
++		die("`pos + len' is too far after the end of the buffer");
++
++	if (dlen >= len)
++		strbuf_grow(sb, dlen - len);
++	memmove(sb->buf + pos + dlen,
++			sb->buf + pos + len,
++			sb->len - pos - len);
++	memcpy(sb->buf + pos, data, dlen);
++	strbuf_setlen(sb, sb->len + dlen - len);
++}
++
++void strbuf_insert(struct strbuf *sb, size_t pos, const void *data, size_t len)
++{
++	strbuf_splice(sb, pos, 0, data, len);
++}
++
++void strbuf_remove(struct strbuf *sb, size_t pos, size_t len)
++{
++	strbuf_splice(sb, pos, len, NULL, 0);
++}
++
++void strbuf_add(struct strbuf *sb, const void *data, size_t len)
++{
++	strbuf_grow(sb, len);
++	memcpy(sb->buf + sb->len, data, len);
++	strbuf_setlen(sb, sb->len + len);
++}
++
++void strbuf_adddup(struct strbuf *sb, size_t pos, size_t len)
++{
++	strbuf_grow(sb, len);
++	memcpy(sb->buf + sb->len, sb->buf + pos, len);
++	strbuf_setlen(sb, sb->len + len);
++}
++
++void strbuf_addf(struct strbuf *sb, const char *fmt, ...)
++{
++	int len;
++	va_list ap;
++
++	if (!strbuf_avail(sb))
++		strbuf_grow(sb, 64);
++	va_start(ap, fmt);
++	len = vsnprintf(sb->buf + sb->len, sb->alloc - sb->len, fmt, ap);
++	va_end(ap);
++	if (len < 0)
++		die("your vsnprintf is broken");
++	if (len > strbuf_avail(sb)) {
++		strbuf_grow(sb, len);
++		va_start(ap, fmt);
++		len = vsnprintf(sb->buf + sb->len, sb->alloc - sb->len, fmt, ap);
++		va_end(ap);
++		if (len > strbuf_avail(sb)) {
++			die("this should not happen, your snprintf is broken");
++		}
++	}
++	strbuf_setlen(sb, sb->len + len);
++}
++
++#include <string.h>
++#include <stdlib.h>
++
++
++/* Find the first occurrence of C in S or the final NUL byte.  */
++char * strchrnul(const char *s, int c_in)
++{
++  const unsigned char *char_ptr;
++  const unsigned long int *longword_ptr;
++  unsigned long int longword, magic_bits, charmask;
++  unsigned char c;
++
++  c = (unsigned char) c_in;
++
++  /* Handle the first few characters by reading one character at a time.
++     Do this until CHAR_PTR is aligned on a longword boundary.  */
++  for (char_ptr = (const unsigned char *) s;
++       ((unsigned long int) char_ptr & (sizeof (longword) - 1)) != 0;
++       ++char_ptr)
++    if (*char_ptr == c || *char_ptr == '\0')
++      return (void *) char_ptr;
++
++  /* All these elucidatory comments refer to 4-byte longwords,
++     but the theory applies equally well to 8-byte longwords.  */
++
++  longword_ptr = (unsigned long int *) char_ptr;
++
++  /* Bits 31, 24, 16, and 8 of this number are zero.  Call these bits
++     the "holes."  Note that there is a hole just to the left of
++     each byte, with an extra at the end:
++
++     bits:  01111110 11111110 11111110 11111111
++     bytes: AAAAAAAA BBBBBBBB CCCCCCCC DDDDDDDD
++
++     The 1-bits make sure that carries propagate to the next 0-bit.
++     The 0-bits provide holes for carries to fall into.  */
++  switch (sizeof (longword))
++    {
++    case 4: magic_bits = 0x7efefeffL; break;
++    case 8: magic_bits = ((0x7efefefeL << 16) << 16) | 0xfefefeffL; break;
++    default:
++      abort ();
++    }
++
++  /* Set up a longword, each of whose bytes is C.  */
++  charmask = c | (c << 8);
++  charmask |= charmask << 16;
++  if (sizeof (longword) > 4)
++    /* Do the shift in two steps to avoid a warning if long has 32 bits.  */
++    charmask |= (charmask << 16) << 16;
++  if (sizeof (longword) > 8)
++    abort ();
++
++  /* Instead of the traditional loop which tests each character,
++     we will test a longword at a time.  The tricky part is testing
++     if *any of the four* bytes in the longword in question are zero.  */
++  for (;;)
++    {
++      /* We tentatively exit the loop if adding MAGIC_BITS to
++         LONGWORD fails to change any of the hole bits of LONGWORD.
++
++         1) Is this safe?  Will it catch all the zero bytes?
++         Suppose there is a byte with all zeros.  Any carry bits
++         propagating from its left will fall into the hole at its
++         least significant bit and stop.  Since there will be no
++         carry from its most significant bit, the LSB of the
++         byte to the left will be unchanged, and the zero will be
++         detected.
++
++         2) Is this worthwhile?  Will it ignore everything except
++         zero bytes?  Suppose every byte of LONGWORD has a bit set
++         somewhere.  There will be a carry into bit 8.  If bit 8
++         is set, this will carry into bit 16.  If bit 8 is clear,
++         one of bits 9-15 must be set, so there will be a carry
++         into bit 16.  Similarly, there will be a carry into bit
++         24.  If one of bits 24-30 is set, there will be a carry
++         into bit 31, so all of the hole bits will be changed.
++
++         The one misfire occurs when bits 24-30 are clear and bit
++         31 is set; in this case, the hole at bit 31 is not
++         changed.  If we had access to the processor carry flag,
++         we could close this loophole by putting the fourth hole
++         at bit 32!
++
++         So it ignores everything except 128's, when they're aligned
++         properly.
++
++         3) But wait!  Aren't we looking for C as well as zero?
++         Good point.  So what we do is XOR LONGWORD with a longword,
++         each of whose bytes is C.  This turns each byte that is C
++         into a zero.  */
++
++      longword = *longword_ptr++;
++
++      /* Add MAGIC_BITS to LONGWORD.  */
++      if ((((longword + magic_bits)
++
++            /* Set those bits that were unchanged by the addition.  */
++            ^ ~longword)
++
++           /* Look at only the hole bits.  If any of the hole bits
++              are unchanged, most likely one of the bytes was a
++              zero.  */
++           & ~magic_bits) != 0 ||
++
++          /* That caught zeroes.  Now test for C.  */
++          ((((longword ^ charmask) + magic_bits) ^ ~(longword ^ charmask))
++           & ~magic_bits) != 0)
++        {
++          /* Which of the bytes was C or zero?
++             If none of them were, it was a misfire; continue the search.  */
++
++          const unsigned char *cp = (const unsigned char *) (longword_ptr - 1);
++
++          if (*cp == c || *cp == '\0')
++            return (char *) cp;
++          if (*++cp == c || *cp == '\0')
++            return (char *) cp;
++          if (*++cp == c || *cp == '\0')
++            return (char *) cp;
++          if (*++cp == c || *cp == '\0')
++            return (char *) cp;
++          if (sizeof (longword) > 4)
++            {
++              if (*++cp == c || *cp == '\0')
++                return (char *) cp;
++              if (*++cp == c || *cp == '\0')
++                return (char *) cp;
++              if (*++cp == c || *cp == '\0')
++                return (char *) cp;
++              if (*++cp == c || *cp == '\0')
++                return (char *) cp;
++            }
++        }
++    }
++
++  /* This should never happen.  */
++  return NULL;
++}
++
++
++
++void strbuf_expand(struct strbuf *sb, const char *format, expand_fn_t fn,
++		   void *context)
++{
++	for (;;) {
++		const char *percent;
++		size_t consumed;
++
++		percent = strchrnul(format, '%');
++		strbuf_add(sb, format, percent - format);
++		if (!*percent)
++			break;
++		format = percent + 1;
++
++		consumed = fn(sb, format, context);
++		if (consumed)
++			format += consumed;
++		else
++			strbuf_addch(sb, '%');
++	}
++}
++
++size_t strbuf_fread(struct strbuf *sb, size_t size, FILE *f)
++{
++	size_t res;
++
++	strbuf_grow(sb, size);
++	res = fread(sb->buf + sb->len, 1, size, f);
++	if (res > 0) {
++		strbuf_setlen(sb, sb->len + res);
++	}
++	return res;
++}
++
++static inline ssize_t xread(int fd, void *buf, size_t len)
++{
++	ssize_t nr;
++
++ //case ERROR_NOT_READY: error = EAGAIN; break;
++ //       case ERROR_NO_PROC_SLOTS: error = EAGAIN; break;
++ //     case ERROR_IO_INCOMPLETE: error = EINTR; break;
++ //   case ERROR_OPERATION_ABORTED: error = EINTR; break;
++    DWORD e = GetLastError() ;  
++    
++	while (1) {
++		nr = read(fd, buf, len);
++		if ((nr < 0) && (e == ERROR_NOT_READY || e == ERROR_NO_PROC_SLOTS))
++			continue;
++		return nr;
++	}
++}
++
++ssize_t strbuf_read(struct strbuf *sb, int fd, size_t hint)
++{
++	size_t oldlen = sb->len;
++
++	strbuf_grow(sb, hint ? hint : 8192);
++	for (;;) {
++		ssize_t cnt;
++
++		cnt = xread(fd, sb->buf + sb->len, sb->alloc - sb->len - 1);
++		if (cnt < 0) {
++			strbuf_setlen(sb, oldlen);
++			return -1;
++		}
++		if (!cnt)
++			break;
++		sb->len += cnt;
++		strbuf_grow(sb, 8192);
++	}
++
++	sb->buf[sb->len] = '\0';
++	return sb->len - oldlen;
++}
++
++int strbuf_getline(struct strbuf *sb, FILE *fp, int term)
++{
++	int ch;
++
++	strbuf_grow(sb, 0);
++	if (feof(fp))
++		return EOF;
++
++	strbuf_reset(sb);
++	while ((ch = fgetc(fp)) != EOF) {
++		if (ch == term)
++			break;
++		strbuf_grow(sb, 1);
++		sb->buf[sb->len++] = ch;
++	}
++	if (ch == EOF && sb->len == 0)
++		return EOF;
++
++	sb->buf[sb->len] = '\0';
++	return 0;
++}
++
++int strbuf_read_file(struct strbuf *sb, const char *path, size_t hint)
++{
++	int fd, len;
++
++	fd = open(path, O_RDONLY);
++	if (fd < 0)
++		return -1;
++	len = strbuf_read(sb, fd, hint);
++	close(fd);
++	if (len < 0)
++		return -1;
++
++	return len;
++}
+diff --git a/lib/strbuf.h b/lib/strbuf.h
+new file mode 100644
+index 0000000..faec229
+--- /dev/null
++++ b/lib/strbuf.h
+@@ -0,0 +1,122 @@
++#ifndef STRBUF_H
++#define STRBUF_H
++
++/*
++ * Strbuf's can be use in many ways: as a byte array, or to store arbitrary
++ * long, overflow safe strings.
++ *
++ * Strbufs has some invariants that are very important to keep in mind:
++ *
++ * 1. the ->buf member is always malloc-ed, hence strbuf's can be used to
++ *    build complex strings/buffers whose final size isn't easily known.
++ *
++ *    It is NOT legal to copy the ->buf pointer away.
++ *    `strbuf_detach' is the operation that detachs a buffer from its shell
++ *    while keeping the shell valid wrt its invariants.
++ *
++ * 2. the ->buf member is a byte array that has at least ->len + 1 bytes
++ *    allocated. The extra byte is used to store a '\0', allowing the ->buf
++ *    member to be a valid C-string. Every strbuf function ensure this
++ *    invariant is preserved.
++ *
++ *    Note that it is OK to "play" with the buffer directly if you work it
++ *    that way:
++ *
++ *    strbuf_grow(sb, SOME_SIZE);
++ *       ... Here, the memory array starting at sb->buf, and of length
++ *       ... strbuf_avail(sb) is all yours, and you are sure that
++ *       ... strbuf_avail(sb) is at least SOME_SIZE.
++ *    strbuf_setlen(sb, sb->len + SOME_OTHER_SIZE);
++ *
++ *    Of course, SOME_OTHER_SIZE must be smaller or equal to strbuf_avail(sb).
++ *
++ *    Doing so is safe, though if it has to be done in many places, adding the
++ *    missing API to the strbuf module is the way to go.
++ *
++ *    XXX: do _not_ assume that the area that is yours is of size ->alloc - 1
++ *         even if it's true in the current implementation. Alloc is somehow a
++ *         "private" member that should not be messed with.
++ */
++
++#include <assert.h>
++
++extern char strbuf_slopbuf[];
++struct strbuf {
++	size_t alloc;
++	size_t len;
++	char *buf;
++};
++
++#define STRBUF_INIT  { 0, 0, strbuf_slopbuf }
++
++/*----- strbuf life cycle -----*/
++extern void strbuf_init(struct strbuf *, size_t);
++extern void strbuf_release(struct strbuf *);
++extern char *strbuf_detach(struct strbuf *, size_t *);
++extern void strbuf_attach(struct strbuf *, void *, size_t, size_t);
++static inline void strbuf_swap(struct strbuf *a, struct strbuf *b) {
++	struct strbuf tmp = *a;
++	*a = *b;
++	*b = tmp;
++}
++
++/*----- strbuf size related -----*/
++static inline size_t strbuf_avail(struct strbuf *sb) {
++	return sb->alloc ? sb->alloc - sb->len - 1 : 0;
++}
++
++extern void strbuf_grow(struct strbuf *, size_t);
++
++static inline void strbuf_setlen(struct strbuf *sb, size_t len) {
++	if (!sb->alloc)
++		strbuf_grow(sb, 0);
++	assert(len < sb->alloc);
++	sb->len = len;
++	sb->buf[len] = '\0';
++}
++#define strbuf_reset(sb)  strbuf_setlen(sb, 0)
++
++/*----- content related -----*/
++extern void strbuf_rtrim(struct strbuf *);
++extern int strbuf_cmp(struct strbuf *, struct strbuf *);
++
++/*----- add data in your buffer -----*/
++static inline void strbuf_addch(struct strbuf *sb, int c) {
++	strbuf_grow(sb, 1);
++	sb->buf[sb->len++] = c;
++	sb->buf[sb->len] = '\0';
++}
++
++extern void strbuf_insert(struct strbuf *, size_t pos, const void *, size_t);
++extern void strbuf_remove(struct strbuf *, size_t pos, size_t len);
++
++/* splice pos..pos+len with given data */
++extern void strbuf_splice(struct strbuf *, size_t pos, size_t len,
++                          const void *, size_t);
++
++extern void strbuf_add(struct strbuf *, const void *, size_t);
++static inline void strbuf_addstr(struct strbuf *sb, const char *s) {
++	strbuf_add(sb, s, strlen(s));
++}
++static inline void strbuf_addbuf(struct strbuf *sb, struct strbuf *sb2) {
++	strbuf_add(sb, sb2->buf, sb2->len);
++}
++extern void strbuf_adddup(struct strbuf *sb, size_t pos, size_t len);
++
++typedef size_t (*expand_fn_t) (struct strbuf *sb, const char *placeholder, void *context);
++extern void strbuf_expand(struct strbuf *sb, const char *format, expand_fn_t fn, void *context);
++
++__attribute__((format(printf,2,3)))
++extern void strbuf_addf(struct strbuf *sb, const char *fmt, ...);
++
++extern size_t strbuf_fread(struct strbuf *, size_t, FILE *);
++/* XXX: if read fails, any partial read is undone */
++extern ssize_t strbuf_read(struct strbuf *, int fd, size_t hint);
++extern int strbuf_read_file(struct strbuf *sb, const char *path, size_t hint);
++
++extern int strbuf_getline(struct strbuf *, FILE *, int);
++
++extern void stripspace(struct strbuf *buf, int skip_comments);
++extern void launch_editor(const char *path, struct strbuf *buffer, const char *const *env);
++
++#endif /* STRBUF_H */
+diff --git a/lib/t.sh b/lib/t.sh
+new file mode 100644
+index 0000000..c1ad6e3
+--- /dev/null
++++ b/lib/t.sh
+@@ -0,0 +1 @@
++gcc -g -I/mingw64/include/gmime-2.6/ -I/mingw64/lib/glib-2.0/include -I/mingw64/include/glib-2.0 test.c -L/mingw64/lib -lgmime-2.6 -lglib-2.0 -lgmodule-2.0 -lgobject-2.0 -o t
+diff --git a/lib/test.c b/lib/test.c
+new file mode 100644
+index 0000000..f50cea8
+--- /dev/null
++++ b/lib/test.c
+@@ -0,0 +1,72 @@
++
++#include <gmime/gmime.h>
++
++static GMimeStream*
++get_mime_stream (const char *path)
++{
++	FILE *file;
++	GMimeStream *stream;
++
++	file = fopen (path, "r");
++	if (!file) {
++		return NULL;
++	}
++
++	stream = g_mime_stream_file_new (file);
++	if (!stream) {
++		fclose (file);
++		return NULL;
++	}
++
++	return stream;
++}
++
++static char*
++cleanup_maybe (const char *str, gboolean *do_free)
++{
++	char *s;
++
++	if (!str)
++		return NULL;
++
++
++	return s;
++}
++
++
++
++int main(int argc, char **argv)
++{
++  
++	GMimeStream *stream;
++	GMimeParser *parser;
++  GMimeMessage*   mime_msg ; 
++  const char *subject ;
++
++  g_mime_init(0) ; 
++
++  char** argvv[3] ;
++  
++	argvv[0] = "c:\\windows\\explorer.exe" ; 
++	argvv[1] = "C:\\Users\\dongil\\AppData\\Local\\Temp\\mu-500\\51e5868\\6\\ICUIRST_IP_IRST_IP_IRST_report.xlsx";
++	argvv[2] = NULL;
++	g_spawn_async_utf8(NULL, (gchar**)argvv, NULL,
++			    G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
++			    NULL);
++
++  // stream = get_mime_stream ( "f:\\MYSINGLE20130416\\eaglemail\\cur\\2016-01-25 1750_ë¬´ì œ.eml");
++	// parser = g_mime_parser_new_with_stream (stream);
++	// g_object_unref (stream);
++	// if (!parser) {
++	// 	return FALSE;
++	// }
++
++	// mime_msg = g_mime_parser_construct_message (parser);
++  // subject  = g_mime_message_get_subject (mime_msg) ; 
++
++	// FILE *file = fopen("result.txt" , "wb") ;
++  // fwrite(subject, 1 , strlen(subject), file) ;
++  // fclose(file) ; 
++  
++  // printf("%s\n" , subject) ; 
++}
+diff --git a/lib/wordexp.c b/lib/wordexp.c
+new file mode 100644
+index 0000000..6b080d1
+--- /dev/null
++++ b/lib/wordexp.c
+@@ -0,0 +1,136 @@
++
++#include <config.h>
++
++#include <sys/types.h>
++#include <assert.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#ifndef _MSC_VER
++#include <unistd.h>
++#endif /* _MSC_VER */
++#include "wordexp.h"
++#include "glob.h"
++#include <glib.h>
++
++
++static int
++is_valid_variable_char(char c, int pos)
++{
++	if ( (pos && c >= '0' && c <= '9') ||
++	      c == '_' ||
++	     (c >= 'a' && c <= 'z') ||
++	     (c >= 'A' && c <= 'Z'))
++		return 1;
++	return 0;
++}
++
++/*
++ * @brief replace all names of $NAME ${NAME}
++ * with the corresponding environment variable 
++ * @ param in: the string to be checked
++ * @ return the expanded string or a copy of the existing string
++ * must be free() by the calling function 
++*/
++static char *
++expand_variables(const char *in)
++{
++	char *var,*pos,*ret=g_strdup(in);
++	char *val,*str;
++	pos=ret;
++	while ((var=strchr(pos, '$'))) {
++		char *name,*begin=var+1;
++		int npos=0,bpos=0,slen,elen;
++		*var='\0';
++		if (var[1] == '{') {
++			begin++;
++			while (begin[npos]) {
++				bpos=npos;
++				if (begin[npos++] == '}') 
++					break;
++			}
++		} else {
++			while (is_valid_variable_char(begin[npos],npos)) 
++				npos++;	
++			bpos=npos;
++		}
++		name=g_strdup(begin);
++		name[bpos]='\0';		
++		val=getenv(name);
++		free(name);
++		if (! val)
++			val="";
++		slen=strlen(ret)+strlen(val);
++		elen=strlen(begin+npos);
++		str=malloc(slen+elen+1);
++		strcpy(str,ret);
++		strcat(str,val);
++		strcat(str,begin+npos);
++		free(ret);
++		ret=str;
++		pos=ret+slen;
++	}
++	return ret;
++}
++
++/*
++ * @brief minimal realization of wordexp according to IEEE standard
++ * shall perform word expansion as described in the Shell
++ * expansion of ´$NAME´ or ´${NAME}´
++ * expansion of ´*´ and ´?´
++ * @param words: pointer to a string containing one or more words to be expanded
++ * but here only one word supported
++ */
++int 
++wordexp(const char *words, wordexp_t *we, int flags)
++{	
++	int     i;
++	int     error = 0;
++	char   *words_expanded;
++	glob_t  pglob;
++
++	assert(we != NULL);
++	assert(words != NULL);
++ 
++	/* expansion of ´$NAME´ or ´${NAME}´ */
++	words_expanded=expand_variables(words);
++	/* expansion of ´*´, ´?´ */
++	error=glob(words_expanded, 0, NULL, &pglob);
++	if (!error)
++	{
++		/* copy the content of struct of glob into struct of wordexp */
++		we->we_wordc = pglob.gl_pathc;
++		we->we_offs = pglob.gl_offs;
++		we->we_wordv = malloc(we->we_wordc * sizeof(char*));
++		for (i=0; i<we->we_wordc; i++)
++		{
++			we->we_wordv[i] = g_strdup(pglob.gl_pathv[i]);
++		}		
++		globfree(&pglob);
++		free(words_expanded);
++	}
++	else
++	{
++		we->we_wordc = 1;		
++		we->we_wordv = malloc(sizeof(char*));	
++		we->we_wordv[0] = words_expanded;
++	}
++
++
++	return error;	
++}
++
++
++void wordfree(wordexp_t *we)
++{
++	int i;
++
++	for (i=0; i < we->we_wordc; i++)
++	{
++		free (we->we_wordv[i]);
++	}
++	
++	free (we->we_wordv);
++	we->we_wordc = 0;
++}
+diff --git a/lib/wordexp.h b/lib/wordexp.h
+new file mode 100644
+index 0000000..ad18c78
+--- /dev/null
++++ b/lib/wordexp.h
+@@ -0,0 +1,42 @@
++#ifndef _WORDEXP_H_
++#define	_WORDEXP_H_
++
++
++typedef struct {
++	size_t	we_wordc;		/* count of words matched */
++	char		**we_wordv;	/* pointer to list of words */
++	size_t	we_offs;		/* slots to reserve in we_wordv */
++					/* following are internals */
++	char		*we_strings;	/* storage for wordv strings */
++	size_t	we_nbytes;		/* size of we_strings */
++} wordexp_t;
++
++/*
++ * Flags for wordexp().
++ */
++#define	WRDE_APPEND	0x1		/* append to previously generated */
++#define	WRDE_DOOFFS	0x2		/* we_offs member is valid */
++#define	WRDE_NOCMD	0x4		/* disallow command substitution */
++#define	WRDE_REUSE	0x8		/* reuse wordexp_t */
++#define	WRDE_SHOWERR	0x10		/* don't redirect stderr to /dev/null */
++#define	WRDE_UNDEF	0x20		/* disallow undefined shell vars */
++
++/*
++ * Return values from wordexp().
++ */
++#define	WRDE_BADCHAR	1		/* unquoted special character */
++#define	WRDE_BADVAL	2		/* undefined variable */
++#define	WRDE_CMDSUB	3		/* command substitution not allowed */
++#define	WRDE_NOSPACE	4		/* no memory for result */
++#if (_XOPEN_SOURCE - 0) >= 4 || defined(_NETBSD_SOURCE)
++#define	WRDE_NOSYS	5		/* obsolete, reserved */
++#endif
++#define	WRDE_SYNTAX	6		/* shell syntax error */
++#define WRDE_ERRNO	7		/* other errors see errno */
++
++void	wordfree(wordexp_t *);
++int wordexp(const char * words, wordexp_t * we, int flags);
++
++
++#endif /* !_WORDEXP_H_ */
++
+diff --git a/mu/mu-cmd-index.c b/mu/mu-cmd-index.c
+index 249f778..3372024 100644
+--- a/mu/mu-cmd-index.c
++++ b/mu/mu-cmd-index.c
+@@ -38,6 +38,67 @@
+ #include "mu-runtime.h"
+ #include "mu-log.h"
+ 
++
++/* POSIX emulation layer for Windows.
++*
++* Copyright (C) 2008-2012 Anope Team <team@anope.org>
++*
++* Please read COPYING and README for further details.
++*
++* Based on the original code of Epona by Lara.
++* Based on the original code of Services by Andy Church.
++*/
++
++#include <windows.h>
++#include <signal.h>
++//#include "sigaction.h"
++
++/* POSIX emulation layer for Windows.
++*
++* Copyright (C) 2008-2012 Anope Team <team@anope.org>
++*
++* Please read COPYING and README for further details.
++*
++* Based on the original code of Epona by Lara.
++* Based on the original code of Services by Andy Church.
++*/
++
++#define sigemptyset(x) memset((x), 0, sizeof(*(x)))
++
++#ifndef SIGHUP
++# define SIGHUP -1
++#endif
++#ifndef SIGPIPE
++# define SIGPIPE -1
++#endif
++
++struct sigaction
++{
++       void (*sa_handler)(int);
++       int sa_flags;
++       int sa_mask;
++};
++
++extern int sigaction(int, struct sigaction *, struct sigaction *);
++
++int sigaction(int sig, struct sigaction *action, struct sigaction *old)
++{
++       if (sig == -1)
++               return 0;
++       if (old == NULL)
++       {
++               if (signal(sig, SIG_DFL) == SIG_ERR)
++                       return -1;
++       }
++       else
++       {
++               if (signal(sig, action->sa_handler) == SIG_ERR)
++                       return -1;
++       }
++       return 0;
++}
++
++
+ static gboolean MU_CAUGHT_SIGNAL;
+ 
+ static void
+@@ -60,9 +121,9 @@ install_sig_handler (void)
+ 
+ 	MU_CAUGHT_SIGNAL = FALSE;
+ 
+-	action.sa_handler = sig_handler;
+-	sigemptyset(&action.sa_mask);
+-	action.sa_flags = SA_RESETHAND;
++        action.sa_handler = sig_handler;
++        sigemptyset(&action.sa_mask);
++        //notused//action.sa_flags = SA_RESETHAND;
+ 
+ 	for (i = 0; i != G_N_ELEMENTS(sigs); ++i)
+ 		if (sigaction (sigs[i], &action, NULL) != 0)
+diff --git a/mu/mu-cmd-server.c b/mu/mu-cmd-server.c
+index ce22a19..b2e7f4b 100644
+--- a/mu/mu-cmd-server.c
++++ b/mu/mu-cmd-server.c
+@@ -53,6 +53,48 @@
+ #include "mu-msg-part.h"
+ #include "mu-contacts.h"
+ 
++/* POSIX emulation layer for Windows.
++*
++* Copyright (C) 2008-2012 Anope Team <team@anope.org>
++*
++* Please read COPYING and README for further details.
++*
++* Based on the original code of Epona by Lara.
++* Based on the original code of Services by Andy Church.
++*/
++
++#include <windows.h>
++#include <signal.h>
++//#include "sigaction.h"
++
++/* POSIX emulation layer for Windows.
++*
++* Copyright (C) 2008-2012 Anope Team <team@anope.org>
++*
++* Please read COPYING and README for further details.
++*
++* Based on the original code of Epona by Lara.
++* Based on the original code of Services by Andy Church.
++*/
++
++#define sigemptyset(x) memset((x), 0, sizeof(*(x)))
++
++#ifndef SIGHUP
++# define SIGHUP -1
++#endif
++#ifndef SIGPIPE
++# define SIGPIPE -1
++#endif
++
++struct sigaction
++{
++       void (*sa_handler)(int);
++       int sa_flags;
++       int sa_mask;
++};
++
++
++
+ /* signal handling *****************************************************/
+ /*
+  * when we receive SIGINT, SIGHUP, SIGTERM, set MU_CAUGHT_SIGNAL to
+@@ -74,9 +116,9 @@ install_sig_handler (void)
+ 
+ 	MU_TERMINATE = FALSE;
+ 
+-	action.sa_handler = sig_handler;
+-	sigemptyset(&action.sa_mask);
+-	action.sa_flags = SA_RESETHAND;
++        action.sa_handler = sig_handler;
++        sigemptyset(&action.sa_mask);
++        //action.sa_flags = SA_RESETHAND;
+ 
+ 	for (i = 0; i != G_N_ELEMENTS(sigs); ++i)
+ 		if (sigaction (sigs[i], &action, NULL) != 0)
+@@ -1191,20 +1233,26 @@ do_move (MuStore *store, unsigned docid, MuMsg *msg, const char *maildir,
+ 	gchar *sexp;
+ 	gboolean different_mdir;
+ 
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	if (!maildir) {
++		printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 		maildir = mu_msg_get_maildir (msg);
+ 		different_mdir = FALSE;
+-	} else
++	} else{
+ 		/* are we moving to a different mdir, or is it just flags? */
+ 		different_mdir =
+ 			(g_strcmp0 (maildir, mu_msg_get_maildir(msg)) != 0);
++		printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
++	}
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	if (!mu_msg_move_to_maildir (msg, maildir, flags, TRUE,
+ 				     new_name, err))
+ 		return MU_G_ERROR_CODE (err);
+ 
+ 	/* after mu_msg_move_to_maildir, path will be the *new* path,
+ 	 * and flags and maildir fields will be updated as wel */
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	rv = mu_store_update_msg (store, docid, msg, err);
+ 	if (rv == MU_STORE_INVALID_DOCID) {
+ 		mu_util_g_set_error (err, MU_ERROR_XAPIAN,
+@@ -1212,9 +1260,11 @@ do_move (MuStore *store, unsigned docid, MuMsg *msg, const char *maildir,
+ 		print_and_clear_g_error (err);
+ 	}
+ 
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	sexp = mu_msg_to_sexp (msg, docid, NULL, MU_MSG_OPTION_VERIFY);
+ 	/* note, the :move t thing is a hint to the frontend that it
+ 	 * could remove the particular header */
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	print_expr ("(:update %s :move %s)", sexp,
+ 		    different_mdir ? "t" : "nil");
+ 	g_free (sexp);
+@@ -1230,6 +1280,8 @@ move_docid (MuStore *store, unsigned docid, const char* flagstr,
+ 	MuError		 rv;
+ 	MuFlags		 flags;
+ 
++	g_debug("%s:%d", __FILE__, __LINE__) ; 
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	rv  = MU_ERROR;
+ 	msg = mu_store_get_msg (store, docid, err);
+ 
+@@ -1268,20 +1320,28 @@ move_msgid_maybe (ServerContext *ctx, GHashTable *args, GError **err)
+ 	GSList		*docids, *cur;
+ 	const char*	 maildir, *msgid, *flagstr;
+ 	gboolean	 new_name;
++	g_debug("%s:%d", __FILE__, __LINE__) ; 
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
+ 	maildir	 = get_string_from_args (args, "maildir", TRUE, err);
+ 	msgid	 = get_string_from_args (args, "msgid", TRUE, err);
+ 	flagstr	 = get_string_from_args (args, "flags", TRUE, err);
+ 	new_name = get_bool_from_args (args, "newname", TRUE, err);
++	g_debug("%s:%d", __FILE__, __LINE__) ; 
++	printf("%x,%x, %x %s:%d \n", msgid, flagstr, maildir, __FILE__, __LINE__) ; 
+ 
+ 	/*  you cannot use 'maildir' for multiple messages at once */
+ 	if (!msgid || !flagstr || maildir)
+ 		return FALSE;
+ 
++	g_debug("%s:%d", __FILE__, __LINE__) ; 
++	printf("%s:%d %s %s, %s\n", msgid, flagstr, maildir, __FILE__, __LINE__) ; 
+ 	if (!(docids = get_docids_from_msgids (ctx->query, msgid, err))) {
+ 		print_and_clear_g_error (err);
+ 		return TRUE;
+ 	}
++	g_debug("%s:%d", __FILE__, __LINE__) ; 
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
+ 	for (cur = docids; cur; cur = g_slist_next(cur))
+ 		if (move_docid (ctx->store, GPOINTER_TO_SIZE(cur->data),
+@@ -1317,10 +1377,11 @@ cmd_move (ServerContext *ctx, GHashTable *args, GError **err)
+ 	 * it in move_msgid_maybe */
+ 	if (move_msgid_maybe (ctx, args, err))
+ 		return MU_OK;
+-
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	maildir	 = get_string_from_args (args, "maildir", TRUE, err);
+ 	flagstr	 = get_string_from_args (args, "flags", TRUE, err);
+ 	new_name = get_bool_from_args (args, "newname", TRUE, err);
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
+ 	docid = determine_docid (ctx->query, args, err);
+ 	if (docid == MU_STORE_INVALID_DOCID ||
+@@ -1328,10 +1389,12 @@ cmd_move (ServerContext *ctx, GHashTable *args, GError **err)
+ 		print_and_clear_g_error (err);
+ 		return MU_OK;
+ 	}
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
+ 	/* if maildir was not specified, take the current one */
+ 	if (!maildir)
+ 		maildir = mu_msg_get_maildir (msg);
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
+ 	/* determine the real target flags, which come from the
+ 	 * flags-parameter we received (ie., flagstr), if any, plus
+@@ -1341,6 +1404,7 @@ cmd_move (ServerContext *ctx, GHashTable *args, GError **err)
+ 	else
+ 		flags = mu_msg_get_flags (msg);
+ 
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 	if (flags == MU_FLAG_INVALID) {
+ 		print_error (MU_ERROR_IN_PARAMETERS, "invalid flags");
+ 		goto leave;
+@@ -1349,6 +1413,7 @@ cmd_move (ServerContext *ctx, GHashTable *args, GError **err)
+ 	if ((do_move (ctx->store, docid, msg, maildir, flags, new_name, err)
+ 	     != MU_OK))
+ 		print_and_clear_g_error (err);
++	printf("%s:%d\n", __FILE__, __LINE__) ; 
+ 
+ leave:
+ 	mu_msg_unref (msg);
+diff --git a/mu/mu.cc b/mu/mu.cc
+index 7a12085..41013e3 100644
+--- a/mu/mu.cc
++++ b/mu/mu.cc
+@@ -85,6 +85,8 @@ handle_error (MuConfig *conf, MuError merr, GError **err)
+ }
+ 
+ 
++#include <fcntl.h>
++
+ int
+ main (int argc, char *argv[])
+ {
+@@ -92,6 +94,10 @@ main (int argc, char *argv[])
+ 	MuError rv;
+ 	MuConfig *conf;
+ 
++       // _setmode(_fileno(stdin), _O_BINARY); 
++       _setmode(_fileno(stdout), _O_BINARY); 
++       _setmode(_fileno(stderr), _O_BINARY); 
++
+ 	setlocale (LC_ALL, "");
+ 
+ #ifndef GLIB_VERSION_2_36
+diff --git a/mu4e/mu4e-draft.el b/mu4e/mu4e-draft.el
+index d7df6e0..2b09a43 100644
+--- a/mu4e/mu4e-draft.el
++++ b/mu4e/mu4e-draft.el
+@@ -143,7 +143,7 @@ References. If both are empty, return nil."
+ 	(mu4e~shorten-1 refs cut surplus)))
+     (mapconcat (lambda (id) (format "<%s>" id)) refs " ")))
+ 
+-
++ 
+ ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ ;; determine the recipient fields for new messages
+ 
+@@ -312,7 +312,7 @@ If there is just one recipient of ORIGMSG do nothing."
+ (defun mu4e~draft-message-filename-construct (&optional flagstr)
+   "Construct a randomized name for a message file with flags FLAGSTR.
+ It looks something like
+-  <time>-<random>.<hostname>:2,
++  <time>-<random>.<hostname>;2,
+ You can append flags."
+   (let* ((sysname (if (fboundp 'system-name)
+ 		      (system-name)
+@@ -322,11 +322,11 @@ You can append flags."
+ 		      (substring sysname
+ 				 (string-match "^[^.]+" sysname)
+ 				 (match-end 0))))))
+-    (format "%s.%04x%04x%04x%04x.%s:2,%s"
++    (format "%s.%04x%04x%04x%04x.%s;2,%s"
+       (format-time-string "%s" (current-time))
+       (random 65535) (random 65535) (random 65535) (random 65535)
+       hostname (or flagstr ""))))
+-
++ 
+ (defun mu4e~draft-common-construct ()
+   "Construct the common headers for each message."
+   (concat
+@@ -361,8 +361,8 @@ fields will be the same as in the original."
+ 	  (mu4e~draft-header "To" (mu4e~draft-recipients-list-to-string
+ 				    (mu4e-message-field origmsg :to)))
+ 	  (mu4e~draft-header "Cc" (mu4e~draft-recipients-list-to-string
+-				    (mu4e-message-field origmsg :cc))))
+-
++				    (mu4e-message-field origmsg :cc)))) 
++	
+ 	;; if there's no-one in To, copy the CC-list
+ 	(if (zerop (length (mu4e~draft-create-to-lst origmsg)))
+ 	  (mu4e~draft-header "To" (mu4e~draft-recipients-construct
+@@ -445,7 +445,7 @@ will be created from either `mu4e~draft-reply-construct', or
+   (unless mu4e-maildir (mu4e-error "mu4e-maildir not set"))
+   (let ((draft-dir nil))
+     (case compose-type
+-
++      
+       (edit
+ 	;; case-1: re-editing a draft messages. in this case, we do know the
+ 	;; full path, but we cannot really know 'drafts folder'... we make a
+@@ -460,7 +460,7 @@ will be created from either `mu4e~draft-reply-construct', or
+ 	(let ((draft-path (mu4e~draft-determine-path draft-dir)))
+ 	  (copy-file (mu4e-message-field msg :path) draft-path)
+ 	  (mu4e~draft-open-file draft-path)))
+-
++      
+       ((reply forward new)
+ 	;; case-3: creating a new message; in this case, we can determine
+ 	;; mu4e-get-drafts-folder
+@@ -472,7 +472,7 @@ will be created from either `mu4e~draft-reply-construct', or
+ 		   (forward (mu4e~draft-forward-construct msg))
+ 		   (new     (mu4e~draft-newmsg-construct)))))
+ 	  (mu4e~draft-open-file draft-path)
+-          (insert initial-contents)
++          (insert initial-contents) 
+ 	  (newline)
+ 	  ;; include the message signature (if it's set)
+ 	  (if (and mu4e-compose-signature-auto-include mu4e-compose-signature)
+@@ -491,5 +491,5 @@ will be created from either `mu4e~draft-reply-construct', or
+     (unless mu4e~draft-drafts-folder
+       (mu4e-error "failed to determine drafts folder"))))
+ 
+-
++ 
+ (provide 'mu4e-draft)
+diff --git a/mu4e/mu4e-headers.el b/mu4e/mu4e-headers.el
+index bf32bd7..0cab48b 100644
+--- a/mu4e/mu4e-headers.el
++++ b/mu4e/mu4e-headers.el
+@@ -230,7 +230,7 @@ Field must be a symbol, one of: :date, :subject, :size, :prio,
+ (defvar mu4e-headers-default-prefix      '("|"  . "â”‚ ") "Default.")
+ 
+ (defvar mu4e-headers-actions
+-  '( ("capture message"  . mu4e-action-capture-message)
++  '( ("capture message"  . mu4e-action-capture-message) 
+      ("show this thread" . mu4e-action-show-thread))
+   "List of actions to perform on messages in the headers list.
+ The actions are of the form (NAME SHORTCUT FUNC) where:
+@@ -259,7 +259,7 @@ match.
+ * PARAM-FUNC is function that is evaluated once, and its value is then passed to
+ PREDICATE-FUNC as PARAM. This is useful for getting user-input.")
+ 
+-(defvar mu4e-headers-show-threads t
++(defvar mu4e-headers-show-threads nil
+   "Whether to show threads in the headers list.")
+ 
+ (defvar mu4e-headers-full-search nil
+@@ -703,7 +703,7 @@ after the end of the search results."
+ 
+       (define-key map (kbd "[") 'mu4e-headers-prev-unread)
+       (define-key map (kbd "]") 'mu4e-headers-next-unread)
+-
++      
+       ;; change the number of headers
+       (define-key map (kbd "C-+") 'mu4e-headers-split-view-grow)
+       (define-key map (kbd "C--") 'mu4e-headers-split-view-shrink)
+@@ -711,7 +711,7 @@ after the end of the search results."
+       (define-key map (kbd "<C-kp-subtract>") 'mu4e-headers-split-view-shrink)
+ 
+       (define-key map ";" 'mu4e-context-switch)
+-
++      
+       ;; switching to view mode (if it's visible)
+       (define-key map "y" 'mu4e-select-other-view)
+ 
+@@ -811,8 +811,8 @@ after the end of the search results."
+ 	(define-key menumap [forward]  '("Forward" . mu4e-compose-forward))
+ 	(define-key menumap [reply]  '("Reply" . mu4e-compose-reply))
+ 	(define-key menumap [compose-new]  '("Compose new" . mu4e-compose-new))
+-
+-
++      
++    
+ 	(define-key menumap [sepa3] '("--"))
+ 
+ 	(define-key menumap [query-next]
+@@ -852,7 +852,7 @@ after the end of the search results."
+ 		  (info (cdr (assoc field
+ 			       (append mu4e-header-info mu4e-header-info-custom))))
+ 		  (require-full (plist-get info :require-full))
+-		  (sortable (plist-get info :sortable))		  
++		  (sortable (plist-get info :sortable))
+ 		  ;; if sortable, it is either t (when field is sortable itself)
+ 		  ;; or a symbol (if another field is used for sorting)
+ 		  (sortfield (when sortable (if (booleanp sortable) field sortable)))
+@@ -1095,7 +1095,7 @@ the query history stack."
+                        'face 'mu4e-modeline-face)
+                       " "
+                       (mu4e-context-label)))))
+-
++    
+     (switch-to-buffer buf)
+     (run-hook-with-args 'mu4e-headers-search-hook expr)
+     (mu4e~proc-find
+@@ -1619,7 +1619,7 @@ untrashed). If BACKWARDS is non-`nil', move backwards."
+   (interactive)
+   (or (mu4e-headers-find-if-next
+ 	(lambda (msg)
+-	  (let ((flags (mu4e-message-field msg :flags)))
++	  (let ((flags (mu4e-message-field msg :flags))) 
+ 	    (and (member 'unread flags) (not (member 'trashed flags)))))
+ 	backwards)
+     (mu4e-message (format "No %s unread message found"
+diff --git a/mu4e/mu4e-proc.el b/mu4e/mu4e-proc.el
+index d6d90e1..d65d102 100644
+--- a/mu4e/mu4e-proc.el
++++ b/mu4e/mu4e-proc.el
+@@ -78,7 +78,9 @@ Start the process if needed."
+     (unless mu4e~proc-process
+       (mu4e-error "Failed to start the mu4e backend"))
+     (set-process-query-on-exit-flag mu4e~proc-process nil)
+-    (set-process-coding-system mu4e~proc-process 'binary 'utf-8-unix)
++    (set-process-coding-system mu4e~proc-process 'binary 'utf-8)
++    ;; (set-process-coding-system mu4e~proc-process 'utf-8-dos 'utf-8-dos)
++    ;; (set-process-coding-system mu4e~proc-process 'cp949 'cp949)
+     (set-process-filter mu4e~proc-process 'mu4e~proc-filter)
+     (set-process-sentinel mu4e~proc-process 'mu4e~proc-sentinel)))
+ 
+@@ -193,6 +195,7 @@ The server output is as follows:
+   `mu4e-compose-func'."
+   (mu4e-log 'misc "* Received %d byte(s)" (length str))
+   (setq mu4e~proc-buf (concat mu4e~proc-buf str)) ;; update our buffer
++  (mu4e-log 'misc "%s" mu4e~proc-buf)
+   (let ((sexp (mu4e~proc-eat-sexp-from-buf)))
+     (with-local-quit
+       (while sexp
+diff --git a/mu4e/mu4e-view.el b/mu4e/mu4e-view.el
+index a6e2f81..0269eef 100644
+--- a/mu4e/mu4e-view.el
++++ b/mu4e/mu4e-view.el
+@@ -262,7 +262,7 @@ found."
+ 	    (body (mu4e-message-body-text msg prefer-html)))
+       (setq mu4e~view-html-text nil)
+       (when (fboundp 'add-face-text-property)
+-        (add-face-text-property 0 (length body) 'mu4e-view-body-face t body))
++        (add-face-text-property 0 (length body) 'mu4e-view-body-face nil body))
+       body)))
+ 
+ (defun mu4e~view-embedded-winbuf ()
+@@ -298,21 +298,20 @@ marking if it still had that."
+     (with-current-buffer buf
+       (switch-to-buffer buf)
+       (setq mu4e~view-msg msg)
+-      (when (or embedded (not (mu4e~view-mark-as-read-maybe msg)))
+-	(let ((inhibit-read-only t))
+-	  (erase-buffer)
+-	  (mu4e~delete-all-overlays)
+-	  (insert (mu4e-view-message-text msg))
+-	  (goto-char (point-min))
+-	  (mu4e~fontify-cited)
+-	  (mu4e~fontify-signature)
+-	  (mu4e~view-make-urls-clickable)
+-	  (mu4e~view-show-images-maybe msg)
+-	  (setq
+-	    mu4e~view-buffer buf
+-	    mu4e~view-headers-buffer headersbuf)
+-	  (when embedded (local-set-key "q" 'kill-buffer-and-window))
+-	  (mu4e-view-mode))))))
++      (let ((inhibit-read-only t))
++        (erase-buffer)
++        (mu4e~delete-all-overlays)
++        (insert (mu4e-view-message-text msg))
++        (goto-char (point-min))
++        (mu4e~fontify-cited)
++        (mu4e~fontify-signature)
++        (mu4e~view-make-urls-clickable)
++        (mu4e~view-show-images-maybe msg)
++        (setq
++         mu4e~view-buffer buf
++         mu4e~view-headers-buffer headersbuf)
++        (when embedded (local-set-key "q" 'kill-buffer-and-window))
++        (mu4e-view-mode)))))
+ 
+ (defun mu4e~view-get-property-from-event (prop)
+   "Get the property PROP at point, or the location of the mouse.
+@@ -808,16 +807,18 @@ FUNC should be a function taking two arguments:
+ If the message is not New/Unread, do nothing. Evaluates to t if it
+ triggers any changes, nil otherwise. If this function does any
+ changes, it triggers a refresh."
+-  (when (and mu4e-view-auto-mark-as-read msg)
+-    (let ((flags (mu4e-message-field msg :flags))
+-	   (msgid (mu4e-message-field msg :message-id))
+-	   (docid (mu4e-message-field msg :docid)))
+-      ;; attached (embedded) messages don't have docids; leave them alone if it is a new message
+-      (when (and docid (or (member 'unread flags) (member 'new flags)))
+-	;; mark /all/ messages with this message-id as read, so all copies of
+-	;; this message will be marked as read.
+-	(mu4e~proc-move msgid nil "+S-u-N")
+-	t))))
++  ;; (when (and mu4e-view-auto-mark-as-read msg)
++  ;;   (let ((flags (mu4e-message-field msg :flags))
++	;;    (msgid (mu4e-message-field msg :message-id))
++	;;    (docid (mu4e-message-field msg :docid)))
++  ;;     ;; attached (embedded) messages don't have docids; leave them alone if it is a new message
++  ;;     (when (and docid (or (member 'unread flags) (member 'new flags)))
++	;; ;; mark /all/ messages with this message-id as read, so all copies of
++	;; ;; this message will be marked as read.
++	;; (mu4e~proc-move msgid nil "+S-u-N")
++	;; t)))
++  t
++  )
+ 
+ (defun mu4e~view-browse-url-func (url)
+   "Return a function that executes `browse-url' with URL.
+@@ -984,7 +985,7 @@ or `html' or nil.")
+   (interactive)
+   (setq mu4e~view-html-text
+     (if mu4e~message-body-html 'text 'html))
+-  (mu4e-view-refresh))
++  (mu4e-view-refresh)) 
+ 
+ (defun mu4e-view-refresh ()
+   "Redisplay the current message."
+diff --git a/mu4e/org-mu4e.el b/mu4e/org-mu4e.el
+index 4691614..bbc857b 100644
+--- a/mu4e/org-mu4e.el
++++ b/mu4e/org-mu4e.el
+@@ -45,7 +45,7 @@
+   :group 'mu4e
+   :group 'org)
+ 
+-(defvar org-mu4e-link-query-in-headers-mode nil
++(defvar org-mu4e-link-query-in-headers-mode t
+   "If non-nil, `org-store-link' in `mu4e-headers-mode' links to the
+ the current query; otherwise, it links to the message at point.")
+ 
+@@ -129,6 +129,7 @@ Example usage:
+ (defun org-mu4e-open (path)
+   "Open the mu4e message (for paths starting with 'msgid:') or run
+ the query (for paths starting with 'query:')."
++  (require 'mu4e)
+   (cond
+     ((string-match "^msgid:\\(.+\\)" path)
+       (mu4e-view-message-with-message-id (match-string 1 path)))
+@@ -172,21 +173,44 @@ and images in a multipart/related part."
+     (when images "<#/multipart>\n")
+     "<#/multipart>\n"))
+ 
++;; (defun org~mu4e-mime-replace-images (str current-file)
++;;   "Replace images in html files with cid links."
++;;   (let (html-images)
++;;     (cons
++;;      (replace-regexp-in-string ;; replace images in html
++;;       "src=\"\\(file:.+\\)\""
++;;       (lambda (text)
++;;         (format
++;;          "src=\"cid:%s\""
++;;          (let* ((url (and (string-match "src=\"\\([^\"]+\\)\"" text)
++;;                           (match-string 1 text)))
++;;                 ;; (path (expand-file-name url (file-name-directory current-file)))
++;;                 (path (url-filename (url-generic-parse-url url)))
++;;                 (ext (file-name-extension path))
++;;                 (id (replace-regexp-in-string "[\/\\\\]" "_" path)))
++;;            (add-to-list 'html-images
++;;                         (org~mu4e-mime-file
++;; 			  (concat "image/" ext) path id))
++;;            id)))
++;;       str)
++;;      html-images)))
++
++
+ (defun org~mu4e-mime-replace-images (str current-file)
+   "Replace images in html files with cid links."
+   (let (html-images)
+     (cons
+      (replace-regexp-in-string ;; replace images in html
+-      "src=\"\\([^\"]+\\)\""
++      "src=\"file://\\([^\"]+\\)\""
+       (lambda (text)
+         (format
+          "src=\"cid:%s\""
+-         (let* ((url (and (string-match "src=\"\\([^\"]+\\)\"" text)
+-                          (match-string 1 text)))
+-                (path (expand-file-name
+-                       url (file-name-directory current-file)))
++         (let* ((url (match-string 1 text))
++                ;; (path (expand-file-name url (file-name-directory current-file)))
++                ;; (path (url-filename (url-generic-parse-url url)))
++                (path (expand-file-name url ))
+                 (ext (file-name-extension path))
+-                (id (replace-regexp-in-string "[\/\\\\]" "_" path)))
++                (id (replace-regexp-in-string "[:\/\\\\]" "_" path)))
+            (add-to-list 'html-images
+                         (org~mu4e-mime-file
+ 			  (concat "image/" ext) path id))
+@@ -194,15 +218,59 @@ and images in a multipart/related part."
+       str)
+      html-images)))
+ 
++
++;; (defun org~mu4e-mime-convert-to-html ()
++;;   "Convert the current body to html."
++;;   (unless (fboundp 'org-export-string-as)
++;;     (mu4e-error "require function 'org-export-string-as not found."))
++;;   ;; (unless (executable-find "dvipng")
++;;   ;;   (mu4e-error "Required program dvipng not found"))
++;;   (let* ((begin
++;; 	     (save-excursion
++;; 	       (goto-char (point-min))
++;; 	       (search-forward mail-header-separator)))
++;; 	    (end (point-max))
++;; 	    (raw-body (buffer-substring begin end))
++;; 	    (tmp-file (make-temp-name (expand-file-name "mail"
++;; 					temporary-file-directory)))
++;; 	    ;; because we probably don't want to skip part of our mail
++;; 	    (org-export-skip-text-before-1st-heading nil)
++;; 	    ;; because we probably don't want to export a huge style file
++;; 	    (org-export-htmlize-output-type 'inline-css)
++;; 	    ;; makes the replies with ">"s look nicer
++;; 	    (org-export-preserve-breaks t)
++;; 	    ;; dvipng for inline latex because MathJax doesn't work in mail
++;; 	    ;; (org-export-with-LaTeX-fragments 'dvipng)
++;; 	    ;; to hold attachments for inline html images
++;; 	    (html-and-images
++;; 	      (org~mu4e-mime-replace-images
++;;                 (org-export-string-as raw-body 'html )
++;; 		tmp-file))
++;; 	    (html-images (cdr html-and-images))
++;; 	    (html (car html-and-images)))
++;;       (delete-region begin end)
++;;       (save-excursion
++;; 	(goto-char begin)
++;; 	(newline)
++;; 	(insert (org~mu4e-mime-multipart
++;;            raw-body html (mapconcat 'identity html-images "\n"))))))
++
+ (defun org~mu4e-mime-convert-to-html ()
+   "Convert the current body to html."
+   (unless (fboundp 'org-export-string-as)
+     (mu4e-error "require function 'org-export-string-as not found."))
+-  (let* ((begin
+-	     (save-excursion
+-	       (goto-char (point-min))
+-	       (search-forward mail-header-separator)))
+-	    (end (point-max))
++  ;; (unless (executable-find "dvipng")
++  ;;   (mu4e-error "Required program dvipng not found"))
++  (let* ((end
++          (save-excursion
++            (goto-char (point-min))
++            (if (re-search-forward "<#part" nil t)
++                (match-beginning 0 )
++              (point-max))))
++         (begin
++          (save-excursion
++            (goto-char (point-min))
++            (search-forward mail-header-separator)))
+ 	    (raw-body (buffer-substring begin end))
+ 	    (tmp-file (make-temp-name (expand-file-name "mail"
+ 					temporary-file-directory)))
+@@ -213,13 +281,13 @@ and images in a multipart/related part."
+ 	    ;; makes the replies with ">"s look nicer
+ 	    (org-export-preserve-breaks t)
+ 	    ;; dvipng for inline latex because MathJax doesn't work in mail
+-	    (org-export-with-LaTeX-fragments
+-	      (if (executable-find "dvipng") 'dvipng
+-	        (mu4e-message "Cannot find dvipng, ignore inline LaTeX") nil))
++	    ;;divpng;;(org-export-with-LaTeX-fragments
++	    ;;divpng;;  (if (executable-find "dvipng") 'dvipng
++	    ;;divpng;;    (mu4e-message "Cannot find dvipng, ignore inline LaTeX") nil))
+ 	    ;; to hold attachments for inline html images
+ 	    (html-and-images
+ 	      (org~mu4e-mime-replace-images
+-                (org-export-string-as raw-body 'html t)
++                (org-export-string-as raw-body 'html )
+ 		tmp-file))
+ 	    (html-images (cdr html-and-images))
+ 	    (html (car html-and-images)))
+@@ -305,18 +373,19 @@ or org-mode (when in the body)."
+   "Pseudo-Minor mode for mu4e-compose-mode, to edit the message
+ body using org-mode."
+   (interactive)
++  ;; (setf  sendmail-coding-system 'base64)
+   (unless (member major-mode '(org-mode mu4e-compose-mode))
+     (mu4e-error "Need org-mode or mu4e-compose-mode"))
+   ;; we can check if we're already in org-mu4e-compose-mode by checking if the
+   ;; post-command-hook is set; hackish...but a buffer-local variable does not
+   ;; seem to survive buffer switching
+   (if (not (member 'org~mu4e-mime-switch-headers-or-body post-command-hook))
+-    (progn
+-      (org~mu4e-mime-switch-headers-or-body)
+-      (mu4e-message
+-	(concat
+-	  "org-mu4e-compose-org-mode enabled; "
+-	  "press M-m before issuing message-mode commands")))
++      (progn
++        (org~mu4e-mime-switch-headers-or-body)
++        (mu4e-message
++         (concat
++          "org-mu4e-compose-org-mode enabled; "
++          "press M-m before issuing message-mode commands")))
+     (progn ;; otherwise, remove crap
+       (remove-hook 'post-command-hook 'org~mu4e-mime-switch-headers-or-body t)
+       (org~mu4e-mime-undecorate-headers) ;; shut off org-mode stuff
