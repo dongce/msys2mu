@@ -1,6 +1,6 @@
 /* -*-mode: c++; tab-width: 8; indent-tabs-mode: t; c-basic-offset: 8-*- */
 /*
-** Copyright (C) 2008-2013 Dirk-Jan C. Binnema <djcb@djcbsoftware.nl>
+** Copyright (C) 2008-2016 Dirk-Jan C. Binnema <djcb@djcbsoftware.nl>
 **
 ** This program is free software; you can redistribute it and/or modify it
 ** under the terms of the GNU General Public License as published by the
@@ -197,6 +197,9 @@ mu_store_flush (MuStore *store)
 		store->db_writable()->commit ();
 
 	} MU_XAPIAN_CATCH_BLOCK;
+
+	if (store->contacts())
+		mu_contacts_serialize (store->contacts());
 }
 
 
@@ -623,16 +626,16 @@ add_address_subfields (Xapian::Document& doc, const char *addr,
 	g_free (f2);
 }
 
-static void
+static gboolean
 each_contact_info (MuMsgContact *contact, MsgDoc *msgdoc)
 {
 	/* for now, don't store reply-to addresses */
 	if (mu_msg_contact_type (contact) == MU_MSG_CONTACT_TYPE_REPLY_TO)
-		return;
+		return TRUE;
 
 	const std::string pfx (xapian_pfx(contact));
 	if (pfx.empty())
-		return; /* unsupported contact type */
+		return TRUE; /* unsupported contact type */
 
 	if (!mu_str_is_empty(contact->name)) {
 		Xapian::TermGenerator termgen;
@@ -657,22 +660,28 @@ each_contact_info (MuMsgContact *contact, MsgDoc *msgdoc)
 					 msgdoc->_personal,
 					 mu_msg_get_date(msgdoc->_msg));
 	}
+
+	return TRUE;
 }
 
 
-static void
+static gboolean
 each_contact_check_if_personal (MuMsgContact *contact, MsgDoc *msgdoc)
 {
 	GSList *cur;
 
 	if (msgdoc->_personal || !contact->address)
-		return;
+		return TRUE;
 
 	for (cur = msgdoc->_my_addresses; cur; cur = g_slist_next (cur)) {
-		if (g_ascii_strcasecmp (contact->address,
-					(const char*)cur->data) == 0)
+		if (g_ascii_strcasecmp (
+			    contact->address, (const char*)cur->data) == 0) {
 			msgdoc->_personal = TRUE;
+			break;
+		}
 	}
+
+	return TRUE;
 }
 
 Xapian::Document

@@ -47,7 +47,7 @@ describing mu4e's contexts.")
   (if (mu4e-context-current)
     (concat "[" (propertize (mu4e~quote-for-modeline
 			      (mu4e-context-name (mu4e-context-current)))
-		  'face 'mu4e-title-face) "]") ""))
+		  'face 'mu4e-context-face) "]") ""))
 
 (defstruct mu4e-context
   "A mu4e context object with the following members:
@@ -108,6 +108,7 @@ non-nil."
 		  (set (car cell) (cdr cell)))
 	  (mu4e-context-vars context)))
       (setq mu4e~context-current context)
+      (mu4e~main-view-real nil nil)
       (mu4e-message "Switched context to %s" (mu4e-context-name context)))
     context))
 

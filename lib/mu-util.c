@@ -216,45 +216,45 @@ mu_util_check_dir (const gchar* path, gboolean readable, gboolean writeable)
 gchar*
 mu_util_guess_maildir (void)
 {
-        const gchar *mdir1, *home;
+	const gchar *mdir1, *home;
 
-        /* first, try MAILDIR */
-        mdir1 = g_getenv ("MAILDIR");
+	/* first, try MAILDIR */
+	mdir1 = g_getenv ("MAILDIR");
 
-        if (mdir1 && mu_util_check_dir (mdir1, TRUE, FALSE))
-                return g_strdup (mdir1);
+	if (mdir1 && mu_util_check_dir (mdir1, TRUE, FALSE))
+		return g_strdup (mdir1);
 
-        /* then, try <home>/Maildir */
-        home = g_get_home_dir();
-        if (home) {
-                char *mdir2;
-                mdir2 = g_strdup_printf ("%s%cMaildir",
-                        home, G_DIR_SEPARATOR);
-                if (mu_util_check_dir (mdir2, TRUE, FALSE))
-                        return mdir2;
-                g_free (mdir2);
-        }
+	/* then, try <home>/Maildir */
+	home = g_get_home_dir();
+	if (home) {
+		char *mdir2;
+		mdir2 = g_strdup_printf ("%s%cMaildir",
+			home, G_DIR_SEPARATOR);
+		if (mu_util_check_dir (mdir2, TRUE, FALSE))
+			return mdir2;
+		g_free (mdir2);
+	}
 
-        /* nope; nothing found */
-        return NULL;
+	/* nope; nothing found */
+	return NULL;
 }
 
 
 gchar*
 mu_util_guess_mu_homedir (void)
 {
-        const char* home;
+	const char* home;
 
-        /* g_get_home_dir use /etc/passwd, not $HOME; this is better,
-         * as HOME may be wrong when using 'sudo' etc.*/
-        home = g_get_home_dir ();
+	/* g_get_home_dir use /etc/passwd, not $HOME; this is better,
+	 * as HOME may be wrong when using 'sudo' etc.*/
+	home = g_get_home_dir ();
 
-        if (!home) {
-                MU_WRITE_LOG ("failed to determine homedir");
-                return NULL;
-        }
+	if (!home) {
+		MU_WRITE_LOG ("failed to determine homedir");
+		return NULL;
+	}
 
-        return g_strdup_printf ("%s%c%s", home ? home : ".",
+	return g_strdup_printf ("%s%c%s", home ? home : ".",
 				G_DIR_SEPARATOR, ".mu");
 }
 
@@ -463,35 +463,25 @@ mu_util_locale_is_utf8 (void)
 gboolean
 mu_util_fputs_encoded (const char *str, FILE *stream)
 {
-	int rv;
-	unsigned	 bytes;
-	char		*conv;
+	int	 rv;
+	char	*conv;
 
-	g_return_val_if_fail (str, FALSE);
 	g_return_val_if_fail (stream, FALSE);
 
 	/* g_get_charset return TRUE when the locale is UTF8 */
 	if (mu_util_locale_is_utf8())
 		return fputs (str, stream) == EOF ? FALSE : TRUE;
 
-	 /* charset is _not_ utf8, so we actually have to convert
-	  * it
-	  */
+	 /* charset is _not_ utf8, so we need to convert it */
 	conv = NULL;
 	if (g_utf8_validate (str, -1, NULL))
-		/* it _seems_ that on the bsds, the final err param
-		 * may receive garbage... so we don't use it */
-		conv = g_locale_from_utf8
-			(str, -1, (gsize*)&bytes, NULL, NULL);
+		conv = g_locale_from_utf8 (str, -1, NULL, NULL, NULL);
 
-	/* conversion failed; this happens because is some cases GMime
-	 * may gives us non-UTF-8 strings from e.g. wrongly encoded
-	 * message-subjects; if so, we escape the string
-	 */
-	if (!conv)
-		conv = g_strescape (str, "\n\t");
-
-	rv  = conv ? fputs (conv, stream) : EOF;
+	/* conversion failed; this happens because is some cases GMime may gives
+	 * us non-UTF-8 strings from e.g. wrongly encoded message-subjects; if
+	 * so, we escape the string */
+	conv = conv ? conv : g_strescape (str, "\n\t");
+	rv   = conv ? fputs (conv, stream) : EOF;
 	g_free (conv);
 
 	return (rv == EOF) ? FALSE : TRUE;
@@ -605,5 +595,3 @@ mu_util_read_password (const char *prompt)
 
 	return g_strdup (pass);
 }
-
-

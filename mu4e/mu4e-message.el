@@ -36,7 +36,7 @@
 
 (defcustom mu4e-html2text-command
   (if (fboundp 'shr-insert-document) 'mu4e-shr2text 'html2text)
-  
+
   "Either a shell command or a function that converts from html to plain text.
 
 If it is a shell-command, the command reads html from standard
@@ -51,8 +51,8 @@ function).
 
 In both cases, the output is expected to be in UTF-8 encoding.
 
-Newer emacs has the shr renderer, and when its available,
-conversion defaults `mu4e-shr2text'; otherwise, the default is
+Newer emacs has the shr renderer, and when it's available
+conversion defaults to `mu4e-shr2text'; otherwise, the default is
 emacs' built-in `html2text' function."
   :type '(choice string function)
   :group 'mu4e-view)
@@ -67,7 +67,9 @@ is always used."
 (defcustom mu4e-view-html-plaintext-ratio-heuristic 5
   "Ratio between the length of the html and the plain text part
 below which mu4e will consider the plain text part to be 'This
-messages requires html' text bodies."
+messages requires html' text bodies. You can neutralize
+it (always show the text version) by using
+`most-positive-fixnum'."
   :type 'integer
   :group 'mu4e-view)
 
@@ -156,57 +158,69 @@ This is equivalent to:
   (mu4e-message-field (mu4e-message-at-point) FIELD)."
   (mu4e-message-field (mu4e-message-at-point) field))
 
-(defun mu4e-message-body-text (msg)
-  "Get the body in text form for this message.
-This is either :body-txt, or if not available, :body-html converted
-to text, using `mu4e-html2text-command' is non-nil, it will use
-that. Normally, thiss function prefers the text part, but this can
-be changed by setting `mu4e-view-prefer-html'."
+(defvar mu4e~message-body-html nil
+  "Whether the body text uses HTML.")
+
+
+(defun mu4e~message-use-html-p (msg prefer-html)
+  "Determine whether we want to use html or text; this is based
+on PREFER-HTML and whether the message supports the given
+representation."
   (let* ((txt (mu4e-message-field msg :body-txt))
 	  (html (mu4e-message-field msg :body-html))
-	  (body
-	    (cond
-	      ;; does it look like some text? ie., if the text part is more than
-          ;; mu4e-view-html-plaintext-ratio-heuristic times shorter than the
-          ;; html part, it should't be used
-          ;; This is an heuristic to guard against 'This messages requires
-          ;; html' text bodies.
-	      ((and (> (* mu4e-view-html-plaintext-ratio-heuristic
-                      (length txt)) (length html))
-		 ;; use html if it's prefered, unless there is no html
-		 (or (not mu4e-view-prefer-html) (not html)))
-		txt)
-	      ;; otherwise, it there some html?
-	      (html
-		(with-temp-buffer
-		  (insert html)
-		  (cond
-                   ((stringp mu4e-html2text-command)
-                    (let* ((tmp-file (make-temp-file "mu4e-html")))
-                     (write-region (point-min) (point-max) tmp-file)
-                     (erase-buffer)
-                     (call-process-shell-command mu4e-html2text-command tmp-file t t)
-                     (delete-file tmp-file)))
-		    ((functionp mu4e-html2text-command)
-		      (funcall mu4e-html2text-command))
-		    (t (mu4e-error "Invalid `mu4e-html2text-command'")))
-		  (buffer-string))
-                )
-	      (t ;; otherwise, an empty body
-		""))))
+	  (txt-len (length txt))
+	  (html-len (length html))
+	  (txt-limit (* mu4e-view-html-plaintext-ratio-heuristic txt-len))
+	  (txt-limit (if (>= txt-limit 0) txt-limit most-positive-fixnum)))
+    (cond
+      ; user prefers html --> use html if there is
+      (prefer-html (> html-len 0))
+      ;; otherwise (user prefers text) still use html if there is not enough
+      ;; text
+      ((< txt-limit html-len) t)
+      ;; otherwise, use text
+      (t nil))))
+
+
+(defun mu4e-message-body-text (msg &optional prefer-html)
+  "Get the body in text form for this message.
+This is either :body-txt, or if not available, :body-html
+converted to text, using `mu4e-html2text-command' is non-nil, it
+will use that. Normally, this function prefers the text part,
+unless PREFER-HTML is non-nil."
+  (setq mu4e~message-body-html (mu4e~message-use-html-p msg prefer-html))
+  (let ((body
+	  (if mu4e~message-body-html
+	    ;; use an HTML body
+	    (with-temp-buffer
+	      (insert (mu4e-message-field msg :body-html))
+	      (cond
+		((stringp mu4e-html2text-command)
+		  (let* ((tmp-file (mu4e-make-temp-file "html")))
+		    (write-region (point-min) (point-max) tmp-file)
+		    (erase-buffer)
+		    (call-process-shell-command mu4e-html2text-command tmp-file t t)
+		    (delete-file tmp-file)))
+		((functionp mu4e-html2text-command)
+		  (funcall mu4e-html2text-command))
+		(t (mu4e-error "Invalid `mu4e-html2text-command'")))
+	      (setq mu4e~message-body-html t)
+	      (buffer-string))
+	    ;; use a text body
+	    (or (mu4e-message-field msg :body-txt) ""))))
     ;; and finally, remove some crap from the remaining string; it seems
     ;; esp. outlook lies about its encoding (ie., it says 'iso-8859-1' but
     ;; really it's 'windows-1252'), thus giving us these funky chars. here, we
     ;; either remove them, or replace with 'what-was-meant' (heuristically)
     (with-temp-buffer
-      (insert body)
-      (goto-char (point-min))
-      (while (re-search-forward "[ ’]" nil t)
-	(replace-match
-	  (cond
-	    ((string= (match-string 0) "’") "'")
-	    (t		                       ""))))
-      (buffer-string))))
+	   (insert body)
+	   (goto-char (point-min))
+	   (while (re-search-forward "[ ’]" nil t)
+	     (replace-match
+	       (cond
+		 ((string= (match-string 0) "’") "'")
+		 (t		                       ""))))
+	   (buffer-string)))) 
 
 (defun mu4e-message-contact-field-matches (msg cfield rx)
   "Checks whether any of the of the contacts in field
@@ -268,7 +282,7 @@ point in eiter the headers buffer or the view buffer."
 `mu4e-html2text-command' in a new enough emacs. Based on code by
 Titus von der Malsburg."
   (interactive)
-  (let ((dom (libxml-parse-html-region (point-min) (point-max)))
+  (let (
 	 ;; When HTML emails contain references to remote images,
 	 ;; retrieving these images leaks information. For example,
 	 ;; the sender can see when I openend the email and from which
@@ -277,8 +291,7 @@ Titus von der Malsburg."
 	 ;; See this discussion on mu-discuss:
 	 ;; https://groups.google.com/forum/#!topic/mu-discuss/gr1cwNNZnXo
 	 (shr-inhibit-images t))
-    (erase-buffer)
-    (shr-insert-document dom)
+    (shr-render-region (point-min) (point-max))
     (goto-char (point-min))))
 
 (provide 'mu4e-message)

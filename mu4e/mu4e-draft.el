@@ -99,7 +99,6 @@ its settings apply."
 	(funcall mu4e-compose-cite-function))
       (pop-mark)
       (goto-char (point-min))
-      (mu4e~fontify-cited)
       (buffer-string))))
 
 (defun mu4e~draft-header (hdr val)
@@ -109,7 +108,17 @@ If VAL is nil, return nil."
   ;; later.
   (when val (format "%s: %s\n"
 	      (propertize hdr 'face 'mu4e-header-key-face)
-	      (propertize val 'face 'mu4e-header-val-face))))
+	      (propertize val 'face 'mu4e-header-value-face))))
+
+(defconst mu4e~max-reference-num 21
+  "Maximum number of References:, as suggested by
+`message-shorten-references'.")
+
+(defun mu4e~shorten-1 (list cut surplus)
+  "Cut SURPLUS elements out of LIST, beginning with CUTth
+one. Code borrowed from `message-shorten-1'."
+  (setcdr (nthcdr (- cut 2) list)
+	  (nthcdr (+ (- cut 2) surplus 1) list)))
 
 (defun mu4e~draft-references-construct (msg)
   "Construct the value of the References: header based on MSG as a
@@ -125,7 +134,13 @@ References. If both are empty, return nil."
 	  (refs (if (and msgid (not (string= msgid "")))
 		  (append refs (list msgid)) refs))
 	  ;; no doubles
-	  (refs (delete-duplicates refs :test #'equal)))
+	  (refs (delete-duplicates refs :test #'equal))
+	  (refnum (length refs))
+	  (cut 2))
+    ;; remove some refs when there are too many
+    (when (> refnum mu4e~max-reference-num)
+      (let ((surplus (- refnum mu4e~max-reference-num)))
+	(mu4e~shorten-1 refs cut surplus)))
     (mapconcat (lambda (id) (format "<%s>" id)) refs " ")))
 
  
@@ -231,7 +246,7 @@ based on `user-full-name' and `user-mail-address'; if the latter is
 nil, function returns nil."
   (when user-mail-address
     (if user-full-name
-      (format "%s <%s>" user-full-name user-mail-address)
+      (format "%s <%s>" (mu4e~rfc822-quoteit user-full-name) user-mail-address)
       (format "%s" user-mail-address))))
 
 
@@ -350,7 +365,8 @@ fields will be the same as in the original."
 	
 	;; if there's no-one in To, copy the CC-list
 	(if (zerop (length (mu4e~draft-create-to-lst origmsg)))
-	  (mu4e~draft-header "To" (mu4e~draft-recipients-construct :cc origmsg reply-all))
+	  (mu4e~draft-header "To" (mu4e~draft-recipients-construct
+				    :cc origmsg reply-all))
 	  ;; otherwise...
 	  (concat
 	    (mu4e~draft-header "To" (mu4e~draft-recipients-construct :to origmsg))
@@ -404,7 +420,7 @@ fields will be the same as in the original."
 
 (defun mu4e~draft-open-file (path)
   "Open the the draft file at PATH."
-  (if (and mu4e-compose-in-new-frame (window-system))
+  (if mu4e-compose-in-new-frame
     (find-file-other-frame path)
     (find-file path)))
 
@@ -415,9 +431,10 @@ fields will be the same as in the original."
 
 
 (defun mu4e-draft-open (compose-type &optional msg)
-  "Open a draft file for a new message (when COMPOSE-TYPE is `reply', `forward' or `new'),
-open an existing draft (when COMPOSE-TYPE is `edit'), or re-send
-an existing message (when COMPOSE-TYPE is `resend').
+  "Open a draft file for a new message (when COMPOSE-TYPE is `reply',
+ `forward' or `new'), open an existing draft (when COMPOSE-TYPE
+is `edit'), or re-send an existing message (when COMPOSE-TYPE is
+`resend').
 
 The name of the draft folder is constructed from the
 concatenation of `mu4e-maildir' and `mu4e-drafts-folder' (the
@@ -430,8 +447,9 @@ will be created from either `mu4e~draft-reply-construct', or
     (case compose-type
       
       (edit
-	;; case-1: re-editing a draft messages. in this case, we do know the full
-	;; path, but we cannot really know 'drafts folder'... we make a guess
+	;; case-1: re-editing a draft messages. in this case, we do know the
+	;; full path, but we cannot really know 'drafts folder'... we make a
+	;; guess
 	(setq draft-dir (mu4e~guess-maildir (mu4e-message-field msg :path)))
 	(mu4e~draft-open-file (mu4e-message-field msg :path)))
 
@@ -444,7 +462,7 @@ will be created from either `mu4e~draft-reply-construct', or
 	  (mu4e~draft-open-file draft-path)))
       
       ((reply forward new)
-	;; case-3: creating a new message; in this case, we can determing
+	;; case-3: creating a new message; in this case, we can determine
 	;; mu4e-get-drafts-folder
 	(setq draft-dir (mu4e-get-drafts-folder msg))
 	(let ((draft-path (mu4e~draft-determine-path draft-dir))
@@ -463,8 +481,11 @@ will be created from either `mu4e~draft-reply-construct', or
 		(message-insert-signature)
 		(mu4e~fontify-signature))))))
       (t (mu4e-error "unsupported compose-type %S" compose-type)))
-      ;; evaluate mu4e~drafts-drafts-folder once, here, and use that value
-      ;; throughout.
+    ;; if we didn't find a draft folder yet, try some default
+    (unless draft-dir
+      (setq draft-dir (mu4e-get-drafts-folder msg)))
+    ;; evaluate mu4e~drafts-drafts-folder once, here, and use that value
+    ;; throughout.
     (set (make-local-variable 'mu4e~draft-drafts-folder) draft-dir)
     (put 'mu4e~draft-drafts-folder 'permanent-local t)
     (unless mu4e~draft-drafts-folder

@@ -128,6 +128,13 @@ The first letter of NAME is used as a shortcut character.")
 (defvar mu4e-view-fill-headers t
   "If non-nil, automatically fill the headers when viewing them.")
 
+(defvar mu4e-view-header-field-keymap
+  (let ((map (make-sparse-keymap)))
+    (define-key map [mouse-1] 'mu4e~view-header-field-fold)
+    (define-key map (kbd "TAB") 'mu4e~view-header-field-fold)
+    map)
+  "Keymap used for header fields.")
+
 (defvar mu4e-view-contacts-header-keymap
   (let ((map (make-sparse-keymap)))
     (define-key map [mouse-2] 'mu4e~view-compose-contact)
@@ -176,19 +183,14 @@ message extracted at some path.")
   "A mapping of user-visible attachment number to the actual part index.")
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defun mu4e-view-message-with-msgid (msgid)
-  "View message with MSGID.
-This is meant for external programs wanting to show specific
-messages - for example, `mu4e-org'."
-  ;; note: hackish; if mu4e-decryption-policy is non-nil (ie., t or
-  ;; 'ask), we decrypt the message. Since here we don't know if
-  ;; message is encrypted or not, when the policy is 'ask'. we simply
-  ;; assume the user said yes...  the alternative would be to ask for
-  ;; each message, encrypted or not.  maybe we need an extra policy...
-  (let ((view-buffer (get-buffer mu4e~view-buffer-name)))
-		(when view-buffer
-			(kill-buffer view-buffer)))
-  (mu4e~proc-view msgid mu4e-view-show-images mu4e-decryption-policy))
+(defun mu4e-view-message-with-message-id (msgid)
+  "View message with message-id MSGID. This (re)creates a
+headers-buffer with a search for MSGID, then open a view for that
+message."
+  (mu4e-headers-search (concat "msgid:" msgid) nil nil t msgid t))
+
+(define-obsolete-function-alias 'mu4e-view-message-with-msgid
+  'mu4e-view-message-with-message-id "0.9.17")
 
 (defun mu4e~view-custom-field (msg field)
   "Show some custom header field, or raise an error if it is not
@@ -208,9 +210,10 @@ found."
       (lambda (field)
 	(let ((fieldval (mu4e-message-field msg field)))
 	  (case field
-	    (:subject  (mu4e~view-construct-header field fieldval))
-	    (:path     (mu4e~view-construct-header field fieldval))
-	    (:maildir  (mu4e~view-construct-header field fieldval))
+	    (:subject    (mu4e~view-construct-header field fieldval))
+	    (:path       (mu4e~view-construct-header field fieldval))
+	    (:maildir    (mu4e~view-construct-header field fieldval))
+	    (:user-agent (mu4e~view-construct-header field fieldval))
 	    ((:flags :tags) (mu4e~view-construct-flags-tags-header
 			      field fieldval))
 
@@ -251,7 +254,13 @@ found."
 		 (mu4e~view-custom-field msg field))))))
       mu4e-view-fields "")
     "\n"
-    (let ((body (mu4e-message-body-text msg)))
+    (let* ((prefer-html
+	     (cond
+	       ((eq mu4e~view-html-text 'html) t)
+	       ((eq mu4e~view-html-text 'text) nil)
+	       (t mu4e-view-prefer-html)))
+	    (body (mu4e-message-body-text msg prefer-html)))
+      (setq mu4e~view-html-text nil)
       (when (fboundp 'add-face-text-property)
         (add-face-text-property 0 (length body) 'mu4e-view-body-face nil body))
       body)))
@@ -326,10 +335,15 @@ add text-properties to VAL."
   (let* ((info (cdr (assoc field
 		      (append mu4e-header-info mu4e-header-info-custom))))
 	  (key (plist-get info :name))
+	  (val (if val (propertize val 'field 'mu4e-header-field-value
+	                               'front-sticky '(field))))
 	  (help (plist-get info :help)))
     (if (and val (> (length val) 0))
     (with-temp-buffer
       (insert (propertize (concat key ":")
+		'field 'mu4e-header-field-key
+		'front-sticky '(field)
+		'keymap mu4e-view-header-field-keymap
 		'face 'mu4e-header-key-face
 		'help-echo help) " "
 	(if dont-propertize-val
@@ -346,6 +360,29 @@ add text-properties to VAL."
 	    (indent-to-column margin))))
       (buffer-string))
     "")))
+
+(defun mu4e~view-header-field-fold ()
+  "Fold/unfold headers' value if there are more than one line."
+  (interactive)
+  (let ((name-pos (field-beginning))
+        (value-pos (1+ (field-end))))
+    (if (and name-pos value-pos
+             (eq (get-text-property name-pos 'field) 'mu4e-header-field-key))
+      (save-excursion
+        (let* ((folded))
+          (mapc (lambda (o)
+                  (when (overlay-get o 'mu4e~view-header-field-folded)
+                    (delete-overlay o)
+                    (setq folded t)))
+                (overlays-at value-pos))
+          (unless folded
+            (let* ((o (make-overlay value-pos (field-end value-pos)))
+                   (vals (split-string (field-string value-pos) "\n" t))
+                   (val (if (= (length vals) 1)
+                            (car vals)
+                          (concat (substring (car vals) 0 -3) "..."))))
+              (overlay-put o 'mu4e~view-header-field-folded t)
+              (overlay-put o 'display val))))))))
 
 (defun mu4e~view-compose-contact (&optional point)
   "Compose a message for the address at point."
@@ -750,8 +787,13 @@ FUNC should be a function taking two arguments:
   (make-local-variable 'mu4e~view-attach-map)
   (make-local-variable 'mu4e~view-cited-hidden)
 
+  ;; make permanent too, so they'll survive changing the mode
+  (put 'mu4e~view-link-map 'permanent-local t)
+  (put 'mu4e~view-attach-map 'permanent-local t)
+
   ;; show context in mode-string
-  (set (make-local-variable 'global-mode-string) '(:eval (mu4e-context-label))) 
+  (make-local-variable 'global-mode-string)
+  (add-to-list 'global-mode-string '(:eval (mu4e-context-label)))
  
   (setq buffer-undo-list t);; don't record undo info
      
@@ -934,10 +976,15 @@ the new docid. Otherwise, return nil."
     (mu4e-view-refresh)
     (mu4e~view-hide-cited)))
 
+(defvar mu4e~view-html-text nil
+  "Should we prefer html or text just this once? A symbol `text'
+or `html' or nil.")
+
 (defun mu4e-view-toggle-html ()
   "Toggle html-display of the message body (if any)."
   (interactive)
-  (setq mu4e-view-prefer-html (not mu4e-view-prefer-html)) 
+  (setq mu4e~view-html-text
+    (if mu4e~message-body-html 'text 'html))
   (mu4e-view-refresh)) 
 
 (defun mu4e-view-refresh ()
@@ -1165,8 +1212,8 @@ offer to save a range of attachments."
 
 (defun mu4e-view-open-attachment (&optional msg attnum)
   "Open attachment number ATTNUM from MSG.
-If MSG is nil use the message returned by `message-at-point'.
-If ATTNUM is nil ask for the attachment number."
+If MSG is nil use the message returned by `message-at-point'.  If
+ATTNUM is nil ask for the attachment number."
   (interactive)
   (let* ((msg (or msg (mu4e-message-at-point)))
 	  (attnum (or attnum
@@ -1196,7 +1243,6 @@ If ATTNUM is nil ask for the attachment number."
 (defun mu4e-view-open-attachment-with (msg attachnum &optional cmd)
   "Open MSG's attachment ATTACHNUM with CMD.
 If CMD is nil, ask user for it."
-  (interactive)
   (let* ((att (mu4e~view-get-attach msg attachnum))
 	  (cmd (or cmd
 		 (read-string
@@ -1212,7 +1258,6 @@ If CMD is nil, ask user for it."
 (defun mu4e-view-pipe-attachment (msg attachnum &optional pipecmd)
   "Feed MSG's attachment ATTACHNUM through pipe PIPECMD.
 If PIPECMD is nil, ask user for it."
-  (interactive)
   (let* ((att (mu4e~view-get-attach msg attachnum))
 	  (pipecmd (or pipecmd
 		     (read-string
@@ -1226,7 +1271,6 @@ If PIPECMD is nil, ask user for it."
 
 (defun mu4e-view-open-attachment-emacs (msg attachnum)
   "Open MSG's attachment ATTACHNUM in the current emacs instance."
-  (interactive)
   (let* ((att (mu4e~view-get-attach msg attachnum))
 	  (index (plist-get att :index)))
     (mu4e~view-temp-action (mu4e-message-field msg :docid) index "emacs")))
