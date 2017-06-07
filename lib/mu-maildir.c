@@ -328,8 +328,6 @@ ignore_dir_entry (gchar *entry, unsigned char d_type)
 {
 	if (G_LIKELY(d_type == DT_REG)) {
 
-		guint u;
-
 		/* ignore emacs tempfiles */
 		if (entry[0] == '#')
 			return TRUE;
@@ -344,18 +342,7 @@ ignore_dir_entry (gchar *entry, unsigned char d_type)
 		if (entry[0] == 'c' &&
 		    strncmp (entry, "core", 4) == 0)
 			return TRUE;
-		/* ignore tmp/backup files; find the last char */
-		for (u = 0; entry->d_name[u] != '\0'; ++u) {
-			switch (entry->d_name[u]) {
-			case '#':
-			case '~':
-				/* looks like a backup / tempsave file */
-				if (entry->d_name[u + 1] == '\0')
-					return TRUE;
-			default:
-				continue;
-			}
-		}
+
 		return FALSE; /* other files: don't ignore */
 
 	} else if (d_type == DT_DIR)
@@ -563,11 +550,13 @@ clear_links (const gchar* dirname, GDir *dir, GError **err)
 	const gchar* entry;
 	gboolean rv;
 
-	rv    = TRUE;
+	rv = TRUE;
 	errno = 0;
 	while ((entry = g_dir_read_name (dir))) {
 
-	while ((dentry = readdir (dir))) {
+		const char *fp;
+		char *fullpath;
+		unsigned char d_type;
 
 		/* ignore empty, dot thingies */
 		if (!entry || entry[0] == '.')
@@ -580,39 +569,28 @@ clear_links (const gchar* dirname, GDir *dir, GError **err)
 		fullpath = g_newa (char, strlen(fp) + 1);
 		strcpy (fullpath, fp);
 
-		if (dentry->d_name[0] == '.')
-			continue; /* ignore .,.. other dotdirs */
+		d_type = GET_DTYPE (entry, fullpath);
 
-		fullpath = g_build_path ("/", path, dentry->d_name, NULL);
-		d_type	 = GET_DTYPE (dentry, fullpath);
+		/* ignore non-links / non-dirs */
+		if (d_type != DT_LNK && d_type != DT_DIR)
+			continue;
 
 		if (d_type == DT_LNK) {
-			if (unlink (fullpath) != 0 ) {
-				g_warning ("error unlinking %s: %s",
-					   fullpath, strerror(errno));
+			if (unlink (fullpath) != 0) {
+				/* don't use err */
+				g_warning  ("error unlinking %s: %s",
+					    fullpath, strerror(errno));
 				rv = FALSE;
 			}
-		} else if (d_type == DT_DIR) {
-			DIR *subdir;
-			subdir = opendir (fullpath);
-			if (!subdir) {
-				g_warning ("failed to open dir %s: %s",
-					   fullpath, strerror(errno));
-				rv = FALSE;
-				goto next;
-			}
-
-			if (!clear_links (fullpath, subdir))
-				rv = FALSE;
-
-			closedir (subdir);
-		}
-
-	next:
-		g_free (fullpath);
+		} else /* DT_DIR, see check before*/
+			rv = mu_maildir_clear_links (fullpath, err);
 	}
 
-	return rv;
+	if (errno != 0)
+		mu_util_g_set_error (err, MU_ERROR_FILE,
+				     "file error: %s", strerror(errno));
+
+	return (rv == FALSE && errno == 0);
 }
 
 gboolean
@@ -784,7 +762,7 @@ mu_maildir_get_new_path (const char *oldpath, const char *new_mdir,
 		char *cur;
 		mfile = g_path_get_basename (oldpath);
 		for (cur = &mfile[strlen(mfile)-1]; cur > mfile; --cur) {
-			if ((*cur == ':' || *cur == '!') &&
+			if ((*cur == ';' || *cur == '!') &&
 			    (cur[1] == '2' && cur[2] == ',')) {
 				/* get the custom flags (if any) */
 				custom_flags =
